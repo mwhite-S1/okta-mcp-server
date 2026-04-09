@@ -15,6 +15,7 @@ from okta_mcp_server.utils.client import get_okta_client
 from okta_mcp_server.utils.elicitation import DeleteConfirmation, elicit_or_fallback
 from okta_mcp_server.utils.messages import DELETE_GROUP
 from okta_mcp_server.utils.pagination import build_query_params, create_paginated_response, paginate_all_results
+from okta_mcp_server.utils.serialize import to_dict
 from okta_mcp_server.utils.validation import validate_ids
 
 
@@ -430,7 +431,7 @@ async def list_group_apps(group_id: str, ctx: Context = None) -> list:
         app_count = len(apps) if apps else 0
         logger.info(f"Successfully retrieved {app_count} applications for group {group_id}")
 
-        return [app for app in apps]
+        return [to_dict(app) for app in apps]
     except Exception as e:
         logger.error(f"Exception while listing applications for group {group_id}: {type(e).__name__}: {e}")
         return [f"Exception: {e}"]

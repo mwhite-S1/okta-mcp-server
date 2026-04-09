@@ -19,6 +19,7 @@ from okta_mcp_server.utils.messages import (
     DELETE_POLICY,
     DELETE_POLICY_RULE,
 )
+from okta_mcp_server.utils.serialize import to_dict
 from okta_mcp_server.utils.validation import validate_ids
 
 
@@ -84,7 +85,7 @@ async def list_policies(
 
         logger.info(f"Successfully retrieved {len(policies)} policies")
         return {
-            "policies": [policy.as_dict() for policy in policies],
+            "policies": [to_dict(policy) for policy in policies],
         }
 
     except Exception as e:
@@ -113,7 +114,7 @@ async def get_policy(ctx: Context, policy_id: str) -> Optional[Dict[str, Any]]:
             logger.error(f"Error getting policy {policy_id}: {err}")
             return {"error": str(err)}
 
-        return policy.as_dict() if policy else None
+        return to_dict(policy) if policy else None
 
     except Exception as e:
         logger.error(f"Exception getting policy: {e}")
@@ -148,7 +149,7 @@ async def create_policy(ctx: Context, policy_data: Dict[str, Any]) -> Optional[D
             logger.error(f"Error creating policy: {err}")
             return {"error": str(err)}
 
-        return policy.as_dict() if policy else None
+        return to_dict(policy) if policy else None
 
     except Exception as e:
         logger.error(f"Exception creating policy: {e}")
@@ -177,7 +178,7 @@ async def update_policy(ctx: Context, policy_id: str, policy_data: Dict[str, Any
             logger.error(f"Error updating policy {policy_id}: {err}")
             return {"error": str(err)}
 
-        return policy.as_dict() if policy else None
+        return to_dict(policy) if policy else None
 
     except Exception as e:
         logger.error(f"Exception updating policy: {e}")
@@ -328,7 +329,7 @@ async def list_policy_rules(ctx: Context, policy_id: str) -> Dict[str, Any]:
             return {"rules": []}
 
         return {
-            "rules": [rule.as_dict() for rule in rules],
+            "rules": [to_dict(rule) for rule in rules],
             "has_next": resp.has_next() if resp else False,
             "next_page_token": resp.get_next_page_token() if resp and resp.has_next() else None,
         }
@@ -360,7 +361,7 @@ async def get_policy_rule(ctx: Context, policy_id: str, rule_id: str) -> Optiona
             logger.error(f"Error getting policy rule: {err}")
             return {"error": str(err)}
 
-        return rule.as_dict() if rule else None
+        return to_dict(rule) if rule else None
 
     except Exception as e:
         logger.error(f"Exception getting policy rule: {e}")
@@ -394,7 +395,7 @@ async def create_policy_rule(ctx: Context, policy_id: str, rule_data: Dict[str, 
             logger.error(f"Error creating policy rule: {err}")
             return {"error": str(err)}
 
-        return rule.as_dict() if rule else None
+        return to_dict(rule) if rule else None
 
     except Exception as e:
         logger.error(f"Exception creating policy rule: {e}")
@@ -426,7 +427,7 @@ async def update_policy_rule(
             logger.error(f"Error updating policy rule: {err}")
             return {"error": str(err)}
 
-        return rule.as_dict() if rule else None
+        return to_dict(rule) if rule else None
 
     except Exception as e:
         logger.error(f"Exception updating policy rule: {e}")

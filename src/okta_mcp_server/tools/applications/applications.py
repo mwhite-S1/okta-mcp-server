@@ -14,6 +14,7 @@ from okta_mcp_server.server import mcp
 from okta_mcp_server.utils.client import get_okta_client
 from okta_mcp_server.utils.elicitation import DeactivateConfirmation, DeleteConfirmation, elicit_or_fallback
 from okta_mcp_server.utils.messages import DEACTIVATE_APPLICATION, DELETE_APPLICATION
+from okta_mcp_server.utils.serialize import to_dict
 from okta_mcp_server.utils.validation import validate_ids
 
 
@@ -84,7 +85,7 @@ async def list_applications(
             return []
 
         logger.info(f"Successfully retrieved {len(apps)} applications")
-        return [app for app in apps]
+        return [to_dict(app) for app in apps]
     except Exception as e:
         logger.error(f"Exception while listing applications: {type(e).__name__}: {e}")
         return [f"Exception: {e}"]
@@ -121,7 +122,7 @@ async def get_application(ctx: Context, app_id: str, expand: Optional[str] = Non
             return {"error": str(err)}
 
         logger.info(f"Successfully retrieved application: {app_id}")
-        return app
+        return to_dict(app)
     except Exception as e:
         logger.error(f"Exception while getting application {app_id}: {type(e).__name__}: {e}")
         return {"error": str(e)}
@@ -156,7 +157,7 @@ async def create_application(ctx: Context, app_config: Dict[str, Any], activate:
             return {"error": str(err)}
 
         logger.info(f"Successfully created application")
-        return app
+        return to_dict(app)
     except Exception as e:
         logger.error(f"Exception while creating application: {type(e).__name__}: {e}")
         return {"error": str(e)}
@@ -189,7 +190,7 @@ async def update_application(ctx: Context, app_id: str, app_config: Dict[str, An
             return {"error": str(err)}
 
         logger.info(f"Successfully updated application: {app_id}")
-        return app
+        return to_dict(app)
     except Exception as e:
         logger.error(f"Exception while updating application {app_id}: {type(e).__name__}: {e}")
         return {"error": str(e)}

@@ -73,3 +73,22 @@ DEACTIVATE_POLICY_RULE = (
     "Are you sure you want to deactivate rule {rule_id} "
     "in policy {policy_id}?"
 )
+
+# ---------------------------------------------------------------------------
+# Devices
+# ---------------------------------------------------------------------------
+
+DEACTIVATE_DEVICE = (
+    "Are you sure you want to deactivate device {device_id}? "
+    "Users will lose access via this device."
+)
+
+SUSPEND_DEVICE = (
+    "Are you sure you want to suspend device {device_id}? "
+    "The device will be blocked from accessing Okta resources."
+)
+
+DELETE_DEVICE = (
+    "Are you sure you want to permanently delete device {device_id}? "
+    "The device must already be deactivated. This action cannot be undone."
+)
