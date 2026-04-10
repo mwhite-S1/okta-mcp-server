@@ -37,6 +37,23 @@ from test_governance_live import call, _items, report, report_skip, section, BAS
 # Tests
 # ---------------------------------------------------------------------------
 
+def test_group_rules_query_params(token):
+    """Cover key query parameters for list_group_rules."""
+    section("GROUP RULES — query parameter coverage")
+
+    # Basic list with limit
+    resp = call("GET", "/api/v1/groups/rules?limit=2", token=token)
+    report("GET /api/v1/groups/rules?limit=2 (limit param)", resp, (200, 204))
+
+    # search= text
+    resp = call("GET", "/api/v1/groups/rules?search=mcp&limit=5", token=token)
+    report("GET /api/v1/groups/rules?search=mcp&limit=5 (search= param)", resp, (200, 204))
+
+    # expand= groupIdToGroupNameMap
+    resp = call("GET", "/api/v1/groups/rules?expand=groupIdToGroupNameMap&limit=3", token=token)
+    report("GET /api/v1/groups/rules?expand=groupIdToGroupNameMap&limit=3 (expand= param)", resp, (200, 204))
+
+
 def test_group_rules_read(token):
     """Read-only tests: list existing group rules."""
     section("GROUP RULES — read-only")

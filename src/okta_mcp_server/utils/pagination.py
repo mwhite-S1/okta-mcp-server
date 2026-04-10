@@ -6,46 +6,78 @@
 # See the License for the specific language governing permissions and limitations under the License.
 
 import asyncio
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from loguru import logger
 
 
+def _has_next(response) -> bool:
+    """Check whether there is a next page, supporting both SDK v2 and v3."""
+    if response is None:
+        return False
+    # SDK v2: OktaAPIResponse with has_next()
+    if hasattr(response, "has_next"):
+        return bool(response.has_next())
+    # SDK v3: aiohttp ClientResponse with Link headers
+    if hasattr(response, "links"):
+        return bool(response.links.get("next"))
+    return False
+
+
 def extract_after_cursor(response) -> Optional[str]:
     """Extract the 'after' cursor from the next page URL in Okta API response.
 
-    Args:
-        response: OktaAPIResponse object
-
-    Returns:
-        str: The 'after' cursor value, or None if no next page
+    Supports both SDK v2 (OktaAPIResponse._next) and SDK v3 (ClientResponse.links).
     """
-    if not response or not hasattr(response, "has_next") or not response.has_next():
+    if not response:
         return None
 
-    try:
-        # response._next contains URL like: "/api/v1/users?after=00u1abc123def456"
-        if hasattr(response, "_next") and response._next:
+    # SDK v2: _next attribute contains the next URL
+    if hasattr(response, "_next") and response._next:
+        try:
             parsed = urlparse(response._next)
-            query_params = parse_qs(parsed.query)
-            return query_params.get("after", [None])[0]
-    except Exception as e:
-        logger.warning(f"Failed to extract after cursor: {e}")
+            params = parse_qs(parsed.query)
+            return params.get("after", [None])[0]
+        except Exception as e:
+            logger.warning(f"Failed to extract after cursor from _next: {e}")
+
+    # SDK v3: Link headers via aiohttp ClientResponse.links
+    if hasattr(response, "links"):
+        try:
+            next_link = response.links.get("next", {})
+            url = next_link.get("url") if next_link else None
+            if url:
+                parsed = urlparse(str(url))
+                params = parse_qs(parsed.query)
+                return params.get("after", [None])[0]
+        except Exception as e:
+            logger.warning(f"Failed to extract after cursor from links: {e}")
 
     return None
 
 
 async def paginate_all_results(
-    initial_response, initial_items: List, max_pages: int = 50, delay_between_requests: float = 0.1
+    initial_response,
+    initial_items: List,
+    client_method: Optional[Callable] = None,
+    base_kwargs: Optional[Dict] = None,
+    max_pages: int = 50,
+    delay_between_requests: float = 0.1,
 ) -> Tuple[List, Dict[str, Any]]:
     """Auto-paginate through all pages of results.
 
+    Supports both SDK v2 (response.next()) and SDK v3 (re-calling client_method
+    with updated 'after' cursor extracted from Link headers).
+
     Args:
-        initial_response: The first OktaAPIResponse object
-        initial_items: The first page of items
-        max_pages: Maximum number of pages to fetch (safety limit)
-        delay_between_requests: Delay in seconds between requests
+        initial_response: The first API response object.
+        initial_items: The first page of items.
+        client_method: (SDK v3) The async client method to call for subsequent pages.
+        base_kwargs: (SDK v3) Keyword args to pass to client_method; 'after' is
+            overridden with the cursor for each page.
+        max_pages: Maximum number of pages to fetch (safety limit).
+        delay_between_requests: Delay in seconds between requests.
 
     Returns:
         Tuple of (all_items, pagination_info)
@@ -54,19 +86,41 @@ async def paginate_all_results(
     pages_fetched = 1
     response = initial_response
 
-    pagination_info = {"pages_fetched": 1, "total_items": len(all_items), "stopped_early": False, "stop_reason": None}
+    pagination_info = {
+        "pages_fetched": 1,
+        "total_items": len(all_items),
+        "stopped_early": False,
+        "stop_reason": None,
+    }
 
-    if not response or not hasattr(response, "has_next"):
+    if not _has_next(response):
         return all_items, pagination_info
 
+    use_sdk_v2 = hasattr(response, "next")
+
     try:
-        while response.has_next() and pages_fetched < max_pages:
-            # Add delay to be respectful to the API
+        while _has_next(response) and pages_fetched < max_pages:
             if delay_between_requests > 0:
                 await asyncio.sleep(delay_between_requests)
 
             try:
-                next_items, next_err = await response.next()
+                if use_sdk_v2:
+                    # SDK v2: response.next() returns (items, error)
+                    next_items, next_err = await response.next()
+                else:
+                    # SDK v3: extract cursor, re-call client_method
+                    if client_method is None:
+                        logger.warning("paginate_all_results: SDK v3 requires client_method for pagination")
+                        pagination_info["stopped_early"] = True
+                        pagination_info["stop_reason"] = "client_method required for SDK v3 pagination"
+                        break
+
+                    cursor = extract_after_cursor(response)
+                    if not cursor:
+                        break
+
+                    kwargs = {**(base_kwargs or {}), "after": cursor}
+                    next_items, response, next_err = await client_method(**kwargs)
 
                 if next_err:
                     logger.warning(f"Error fetching page {pages_fetched + 1}: {next_err}")
@@ -79,8 +133,11 @@ async def paginate_all_results(
                     pages_fetched += 1
                     logger.debug(f"Fetched page {pages_fetched}, total items: {len(all_items)}")
                 else:
-                    # No more items, break
                     break
+
+                if use_sdk_v2:
+                    # response object is the same for v2 (has_next updates in place)
+                    pass
 
             except Exception as e:
                 logger.error(f"Exception during pagination on page {pages_fetched + 1}: {e}")
@@ -88,7 +145,7 @@ async def paginate_all_results(
                 pagination_info["stop_reason"] = f"Exception: {e}"
                 break
 
-        if pages_fetched >= max_pages and response.has_next():
+        if pages_fetched >= max_pages and _has_next(response):
             pagination_info["stopped_early"] = True
             pagination_info["stop_reason"] = f"Reached maximum page limit ({max_pages})"
             logger.warning(f"Stopped pagination at {max_pages} pages limit")
@@ -109,14 +166,7 @@ def create_paginated_response(
 ) -> Dict[str, Any]:
     """Create a standardized paginated response format.
 
-    Args:
-        items: List of items to return
-        response: OktaAPIResponse object
-        fetch_all_used: Whether fetch_all was used
-        pagination_info: Additional pagination metadata
-
-    Returns:
-        Dict with standardized pagination response format
+    Supports both SDK v2 (OktaAPIResponse) and SDK v3 (ClientResponse).
     """
     result = {
         "items": items,
@@ -126,12 +176,10 @@ def create_paginated_response(
         "fetch_all_used": fetch_all_used,
     }
 
-    # Add pagination info if not fetch_all
     if not fetch_all_used and response:
-        result["has_more"] = response.has_next() if hasattr(response, "has_next") else False
+        result["has_more"] = _has_next(response)
         result["next_cursor"] = extract_after_cursor(response)
 
-    # Add detailed pagination info if available
     if pagination_info:
         result["pagination_info"] = pagination_info
 
@@ -148,18 +196,10 @@ def build_query_params(
 ) -> Dict[str, Any]:
     """Build query parameters dict for Okta API calls.
 
-    Args:
-        search: Search string
-        filter: Filter string
-        q: Query string
-        after: Pagination cursor
-        limit: Page size limit
-        **kwargs: Additional query parameters
-
-    Returns:
-        Dict of query parameters with non-empty values
+    Values are kept in their native types (int for limit) so they pass
+    Pydantic validation in SDK v3 when unpacked as **kwargs.
     """
-    query_params = {}
+    query_params: Dict[str, Any] = {}
 
     if search:
         query_params["search"] = search
@@ -169,12 +209,11 @@ def build_query_params(
         query_params["q"] = q
     if after:
         query_params["after"] = after
-    if limit:
-        query_params["limit"] = str(limit)
+    if limit is not None:
+        query_params["limit"] = limit  # Keep as int — SDK v3 validates types
 
-    # Add any additional parameters
     for key, value in kwargs.items():
         if value is not None and value != "":
-            query_params[key] = str(value)
+            query_params[key] = value
 
     return query_params

@@ -58,13 +58,9 @@ def _make_client(body=None, execute_error=None, no_content=False):
     executor = AsyncMock()
     executor.create_request.return_value = (MagicMock(), None)
     if execute_error:
-        executor.execute.return_value = (MagicMock(), execute_error)
-    elif no_content:
-        executor.execute.return_value = (None, None)
+        executor.execute.return_value = (None, None, execute_error)
     else:
-        resp = MagicMock()
-        resp.get_body.return_value = body
-        executor.execute.return_value = (resp, None)
+        executor.execute.return_value = (MagicMock(), body, None)
     client = MagicMock()
     client.get_request_executor.return_value = executor
     client.get_base_url.return_value = "https://test.okta.com"

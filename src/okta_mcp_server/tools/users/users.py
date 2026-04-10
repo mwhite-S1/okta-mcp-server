@@ -83,7 +83,7 @@ async def list_users(
         query_params = build_query_params(search=search, filter=filter, q=q, after=after, limit=limit)
 
         logger.debug("Calling Okta API to list users")
-        users, response, err = await client.list_users(query_params)
+        users, response, err = await client.list_users(**query_params)
 
         if err:
             logger.error(f"Okta API error while listing users: {err}")
@@ -96,9 +96,14 @@ async def list_users(
         # Convert users to the expected format
         user_items = [(user.profile, user.id) for user in users]
 
-        if fetch_all and response and hasattr(response, "has_next") and response.has_next():
+        from okta_mcp_server.utils.pagination import _has_next
+        if fetch_all and _has_next(response):
             logger.info(f"fetch_all=True, auto-paginating from initial {len(users)} users")
-            all_users, pagination_info = await paginate_all_results(response, users)
+            all_users, pagination_info = await paginate_all_results(
+                response, users,
+                client_method=client.list_users,
+                base_kwargs=query_params,
+            )
             all_user_items = [(user.profile, user.id) for user in all_users]
 
             logger.info(
@@ -134,7 +139,7 @@ async def get_user_profile_attributes(ctx: Context = None) -> list:
         client = await get_okta_client(manager)
         logger.debug("Fetching first user to extract profile attributes")
 
-        users, _, err = await client.list_users({"limit": 1})
+        users, _, err = await client.list_users(limit=1)
 
         if err:
             logger.error(f"Okta API error while fetching profile attributes: {err}")

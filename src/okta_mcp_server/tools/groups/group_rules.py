@@ -14,6 +14,7 @@ from okta_mcp_server.server import mcp
 from okta_mcp_server.utils.client import get_okta_client
 from okta_mcp_server.utils.elicitation import DeleteConfirmation, elicit_or_fallback
 from okta_mcp_server.utils.messages import DELETE_GROUP_RULE
+from okta_mcp_server.utils.serialize import to_dict
 from okta_mcp_server.utils.validation import validate_ids
 
 
@@ -66,7 +67,7 @@ async def list_group_rules(
             logger.error(f"Okta API error listing group rules: {err}")
             return {"error": str(err)}
 
-        items = [r.to_dict() for r in rules] if rules else []
+        items = [to_dict(r) for r in (rules or [])]
         logger.info(f"Retrieved {len(items)} group rules")
         return {"items": items, "total_fetched": len(items)}
 
@@ -125,7 +126,7 @@ async def create_group_rule(ctx: Context, rule_data: Dict[str, Any]) -> dict:
             logger.error(f"Okta API error creating group rule: {err}")
             return {"error": str(err)}
 
-        result = rule.to_dict()
+        result = to_dict(rule)
         logger.info(f"Created group rule: {result.get('id', 'unknown')}")
         return result
 
@@ -157,7 +158,7 @@ async def get_group_rule(ctx: Context, group_rule_id: str) -> dict:
             logger.error(f"Okta API error getting group rule {group_rule_id}: {err}")
             return {"error": str(err)}
 
-        return rule.to_dict()
+        return to_dict(rule)
 
     except Exception as e:
         logger.error(f"Exception getting group rule {group_rule_id}: {type(e).__name__}: {e}")
@@ -193,7 +194,7 @@ async def replace_group_rule(ctx: Context, group_rule_id: str, rule_data: Dict[s
             logger.error(f"Okta API error replacing group rule {group_rule_id}: {err}")
             return {"error": str(err)}
 
-        result = rule.to_dict()
+        result = to_dict(rule)
         logger.info(f"Replaced group rule: {group_rule_id}")
         return result
 

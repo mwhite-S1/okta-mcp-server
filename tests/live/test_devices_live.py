@@ -37,6 +37,31 @@ from test_governance_live import call, _items, report, report_skip, section, BAS
 # Tests
 # ---------------------------------------------------------------------------
 
+def test_devices_query_params(token):
+    """Cover key query parameters for list_devices."""
+    section("DEVICES — query parameter coverage")
+
+    # search= SCIM with status filter
+    resp = call("GET", '/api/v1/devices?search=status+eq+"ACTIVE"&limit=3', token=token)
+    report('GET /api/v1/devices?search=status+eq+"ACTIVE"&limit=3 (search= SCIM)', resp, (200, 204))
+
+    # limit= parameter
+    resp = call("GET", "/api/v1/devices?limit=2", token=token)
+    report("GET /api/v1/devices?limit=2 (limit param)", resp, (200,))
+
+    # expand=userSummary (embed user summary in each device)
+    resp = call("GET", "/api/v1/devices?expand=userSummary&limit=3", token=token)
+    report("GET /api/v1/devices?expand=userSummary&limit=3 (expand=userSummary)", resp, (200, 204))
+
+    # expand=user (embed full user details)
+    resp = call("GET", "/api/v1/devices?expand=user&limit=1", token=token)
+    report("GET /api/v1/devices?expand=user&limit=1 (expand=user)", resp, (200, 204))
+
+    # search= for SUSPENDED devices
+    resp = call("GET", '/api/v1/devices?search=status+eq+"SUSPENDED"&limit=3', token=token)
+    report('GET /api/v1/devices?search=status+eq+"SUSPENDED"&limit=3', resp, (200, 204))
+
+
 def test_devices_read(token):
     section("DEVICES — read-only")
 

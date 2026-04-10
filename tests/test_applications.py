@@ -94,7 +94,7 @@ class TestListApplications:
         mock_get_client.return_value = client
 
         await list_applications(ctx=ctx_elicit_accept_true, limit=5)
-        call_params = client.list_applications.call_args[0][0]
+        call_params = client.list_applications.call_args.kwargs
         assert call_params.get("limit") == 20
 
     @pytest.mark.asyncio
@@ -105,7 +105,7 @@ class TestListApplications:
         mock_get_client.return_value = client
 
         await list_applications(ctx=ctx_elicit_accept_true, limit=500)
-        call_params = client.list_applications.call_args[0][0]
+        call_params = client.list_applications.call_args.kwargs
         assert call_params.get("limit") == 100
 
     @pytest.mark.asyncio
@@ -116,7 +116,7 @@ class TestListApplications:
         mock_get_client.return_value = client
 
         await list_applications(ctx=ctx_elicit_accept_true, q="Salesforce")
-        call_params = client.list_applications.call_args[0][0]
+        call_params = client.list_applications.call_args.kwargs
         assert call_params.get("q") == "Salesforce"
 
     @pytest.mark.asyncio
@@ -148,7 +148,7 @@ class TestGetApplication:
         result = await get_application(ctx=ctx_elicit_accept_true, app_id=APP_ID)
 
         assert result["id"] == APP_ID
-        client.get_application.assert_awaited_once_with(APP_ID, {})
+        client.get_application.assert_awaited_once_with(APP_ID)
 
     @pytest.mark.asyncio
     async def test_invalid_id_rejected(self, ctx_elicit_accept_true):
@@ -185,7 +185,7 @@ class TestGetApplication:
         mock_get_client.return_value = client
 
         await get_application(ctx=ctx_elicit_accept_true, app_id=APP_ID, expand="user/groups")
-        call_params = client.get_application.call_args[0][1]
+        call_params = client.get_application.call_args.kwargs
         assert call_params.get("expand") == "user/groups"
 
 
@@ -210,7 +210,7 @@ class TestCreateApplication:
         result = await create_application(ctx=ctx_elicit_accept_true, app_config=app_config)
 
         assert result["id"] == APP_ID
-        client.create_application.assert_awaited_once_with(app_config, {"activate": True})
+        client.create_application.assert_awaited_once_with(app_config, activate=True)
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
@@ -222,7 +222,7 @@ class TestCreateApplication:
 
         result = await create_application(ctx=ctx_elicit_accept_true, app_config={}, activate=False)
 
-        client.create_application.assert_awaited_once_with({}, {"activate": False})
+        client.create_application.assert_awaited_once_with({}, activate=False)
         assert result["status"] == "INACTIVE"
 
     @pytest.mark.asyncio

@@ -32,7 +32,13 @@ def _serialize_value(value: Any) -> Any:
 def to_dict(model: Any) -> dict:
     """Convert an Okta SDK model to a fully JSON-serializable dict.
 
-    Calls as_dict() on the model then recursively converts any enum values
-    to their string .value equivalents.
+    Supports both SDK v2 (as_dict) and SDK v3 (to_dict / model_dump) and
+    recursively converts any enum values to their string .value equivalents.
     """
-    return _serialize_value(model.as_dict())
+    if hasattr(model, "as_dict"):
+        return _serialize_value(model.as_dict())
+    if hasattr(model, "to_dict"):
+        return _serialize_value(model.to_dict())
+    if hasattr(model, "model_dump"):
+        return _serialize_value(model.model_dump())
+    return _serialize_value(model)

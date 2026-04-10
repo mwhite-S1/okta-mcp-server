@@ -29,13 +29,10 @@ async def _execute(client, method: str, path: str, body: dict = None):
     request, error = await request_executor.create_request(method, url, body or {})
     if error:
         return None, error
-    response, error = await request_executor.execute(request)
+    response, response_body, error = await request_executor.execute(request)
     if error:
         return None, error
-    if response is None:
-        return None, None
-    body = response.get_body()
-    return body if body else None, None
+    return response_body if response_body else None, None
 
 
 @mcp.tool()

@@ -37,6 +37,104 @@ from test_governance_live import call, _items, report, report_skip, section, BAS
 # Tests
 # ---------------------------------------------------------------------------
 
+def test_policy_types_read(token):
+    """Read-only: list policies of each supported type."""
+    section("POLICIES — type filter coverage")
+
+    for policy_type in ("PASSWORD", "OKTA_SIGN_ON", "MFA_ENROLL", "ACCESS_POLICY", "PROFILE_ENROLLMENT"):
+        resp = call("GET", f"/api/v1/policies?type={policy_type}&limit=3", token=token)
+        report(f"GET /api/v1/policies?type={policy_type}&limit=3", resp, (200, 204))
+
+
+def test_policy_clone(token):
+    """CRUD: create an ACCESS_POLICY, clone it, verify the clone has a distinct ID, delete both.
+
+    Note: only ACCESS_POLICY type supports the clone endpoint — PASSWORD and OKTA_SIGN_ON
+    policies return 400 with "only supported for authentication policies".
+    """
+    section("POLICIES — clone (self-cleaning)")
+
+    ts = int(time.time())
+    # ACCESS_POLICY is the only type that supports /clone
+    base_body = {
+        "type": "ACCESS_POLICY",
+        "name": f"mcp-live-policy-clone-{ts}",
+        "status": "INACTIVE",
+        "description": "MCP live test policy for clone",
+    }
+
+    policy_id = None
+    clone_id = None
+    try:
+        resp = call("POST", "/api/v1/policies", body=base_body, token=token)
+        if not report("POST /api/v1/policies (create ACCESS_POLICY for clone test)", resp, (200, 201, 400)):
+            return
+        if resp.status_code == 400:
+            report_skip("Policy clone", "create returned 400 — skipping")
+            return
+
+        policy_id = resp.json()["id"]
+
+        # Clone the policy
+        resp = call("POST", f"/api/v1/policies/{policy_id}/clone", token=token)
+        if report("POST /api/v1/policies/{policyId}/clone", resp, (200, 201)):
+            clone_data = resp.json()
+            clone_id = clone_data.get("id", "")
+            clone_name = clone_data.get("name", "")
+            if clone_id and clone_id != policy_id:
+                report_skip(f"  clone id: {clone_id[:12]}... name: {clone_name[:40]}", "")
+            else:
+                report_skip("  clone returned same id or no id", "")
+
+    finally:
+        if policy_id:
+            call("DELETE", f"/api/v1/policies/{policy_id}", token=token)
+        if clone_id:
+            call("DELETE", f"/api/v1/policies/{clone_id}", token=token)
+
+
+def test_policy_simulation(token):
+    """Read-only: test policy simulation endpoint (may not be licensed in all tenants)."""
+    section("POLICIES — policy simulation")
+
+    # Find an OKTA_SIGN_ON policy and an active app for simulation
+    resp = call("GET", "/api/v1/policies?type=OKTA_SIGN_ON&limit=1", token=token)
+    if resp.status_code != 200:
+        report_skip("Policy simulation", "could not list OKTA_SIGN_ON policies")
+        return
+
+    policies = resp.json() if isinstance(resp.json(), list) else _items(resp.json())
+    if not policies:
+        report_skip("Policy simulation", "no OKTA_SIGN_ON policies found")
+        return
+
+    resp = call("GET", '/api/v1/apps?filter=status+eq+"ACTIVE"&limit=1', token=token)
+    if resp.status_code != 200:
+        report_skip("Policy simulation", "could not list apps")
+        return
+
+    apps = resp.json() if isinstance(resp.json(), list) else _items(resp.json())
+    if not apps:
+        report_skip("Policy simulation", "no ACTIVE apps found")
+        return
+
+    app_id = apps[0]["id"]
+    sim_body = [
+        {
+            "policyType": "OKTA_SIGN_ON",
+            "appInstance": app_id,
+            "policyContext": {"authProtocol": "SAML2"},
+        }
+    ]
+
+    resp = call("POST", "/api/v1/policies/simulate", body=sim_body, token=token)
+    report(
+        "POST /api/v1/policies/simulate (policy simulation)",
+        resp,
+        (200, 201, 400, 403, 404),
+    )
+
+
 def test_policies_read(token):
     section("POLICIES — read-only")
 

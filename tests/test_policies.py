@@ -121,7 +121,7 @@ class TestListPolicies:
         mock_get_client.return_value = client
 
         await list_policies(ctx=ctx_elicit_accept_true, type="OKTA_SIGN_ON", limit=5)
-        call_params = client.list_policies.call_args[0][0]
+        call_params = client.list_policies.call_args.kwargs
         assert call_params.get("limit") == 20
 
     @pytest.mark.asyncio
@@ -132,7 +132,7 @@ class TestListPolicies:
         mock_get_client.return_value = client
 
         await list_policies(ctx=ctx_elicit_accept_true, type="OKTA_SIGN_ON", limit=500)
-        call_params = client.list_policies.call_args[0][0]
+        call_params = client.list_policies.call_args.kwargs
         assert call_params.get("limit") == 100
 
     @pytest.mark.asyncio
@@ -143,7 +143,7 @@ class TestListPolicies:
         mock_get_client.return_value = client
 
         await list_policies(ctx=ctx_elicit_accept_true, type="OKTA_SIGN_ON", status="ACTIVE")
-        call_params = client.list_policies.call_args[0][0]
+        call_params = client.list_policies.call_args.kwargs
         assert call_params.get("status") == "ACTIVE"
 
 

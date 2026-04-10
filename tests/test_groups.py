@@ -112,8 +112,8 @@ class TestListGroups:
         mock_get_client.return_value = client
 
         await list_groups(ctx=ctx_elicit_accept_true, limit=5)
-        call_params = client.list_groups.call_args[0][0]
-        assert call_params.get("limit") == "20"
+        call_params = client.list_groups.call_args.kwargs
+        assert call_params.get("limit") == 20
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
@@ -124,8 +124,8 @@ class TestListGroups:
         mock_get_client.return_value = client
 
         await list_groups(ctx=ctx_elicit_accept_true, limit=500)
-        call_params = client.list_groups.call_args[0][0]
-        assert call_params.get("limit") == "100"
+        call_params = client.list_groups.call_args.kwargs
+        assert call_params.get("limit") == 100
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
@@ -136,7 +136,7 @@ class TestListGroups:
         mock_get_client.return_value = client
 
         await list_groups(ctx=ctx_elicit_accept_true, search='profile.name sw "Eng"')
-        call_params = client.list_groups.call_args[0][0]
+        call_params = client.list_groups.call_args.kwargs
         assert "search" in call_params
 
     @pytest.mark.asyncio

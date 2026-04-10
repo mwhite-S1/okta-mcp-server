@@ -75,7 +75,7 @@ async def get_logs(
 
         query_params = build_query_params(after=after, limit=limit, since=since, until=until, filter=filter, q=q)
 
-        logs, response, err = await client.get_logs(query_params)
+        logs, response, err = await client.get_logs(**query_params)
 
         if err:
             logger.error(f"Okta API error while retrieving system logs: {err}")
@@ -92,9 +92,14 @@ async def get_logs(
             logger.debug(f"First log entry timestamp: {logs[0].published if hasattr(logs[0], 'published') else 'N/A'}")
             logger.debug(f"Log types found: {set(log.eventType for log in logs[:10] if hasattr(log, 'eventType'))}")
 
-        if fetch_all and response and hasattr(response, "has_next") and response.has_next():
+        from okta_mcp_server.utils.pagination import _has_next
+        if fetch_all and _has_next(response):
             logger.info(f"fetch_all=True, auto-paginating from initial {log_count} log entries")
-            all_logs, pagination_info = await paginate_all_results(response, logs)
+            all_logs, pagination_info = await paginate_all_results(
+                response, logs,
+                client_method=client.get_logs,
+                base_kwargs=query_params,
+            )
 
             logger.info(
                 f"Successfully retrieved {len(all_logs)} log entries across {pagination_info['pages_fetched']} pages"

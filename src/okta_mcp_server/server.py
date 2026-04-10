@@ -85,6 +85,7 @@ def main():
     from okta_mcp_server.tools.governance import settings  # noqa: F401
     from okta_mcp_server.tools.governance import enduser  # noqa: F401
     from okta_mcp_server.tools.governance import iam_bundles  # noqa: F401
+    from okta_mcp_server.tools.governance import request_types  # noqa: F401
     from okta_mcp_server.tools.groups import group_rules  # noqa: F401
     from okta_mcp_server.tools.groups import group_owners  # noqa: F401
     from okta_mcp_server.tools.groups import groups  # noqa: F401

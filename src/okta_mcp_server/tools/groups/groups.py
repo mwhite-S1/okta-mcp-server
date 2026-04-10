@@ -77,7 +77,7 @@ async def list_groups(
         query_params = build_query_params(search=search, filter=filter, q=q, after=after, limit=limit)
 
         logger.debug("Calling Okta API to list groups")
-        groups, response, err = await client.list_groups(query_params)
+        groups, response, err = await client.list_groups(**query_params)
 
         if err:
             logger.error(f"Okta API error while listing groups: {err}")
@@ -87,9 +87,14 @@ async def list_groups(
             logger.info("No groups found")
             return create_paginated_response([], response, fetch_all)
 
-        if fetch_all and response and hasattr(response, "has_next") and response.has_next():
+        from okta_mcp_server.utils.pagination import _has_next
+        if fetch_all and _has_next(response):
             logger.info(f"fetch_all=True, auto-paginating from initial {len(groups)} groups")
-            all_groups, pagination_info = await paginate_all_results(response, groups)
+            all_groups, pagination_info = await paginate_all_results(
+                response, groups,
+                client_method=client.list_groups,
+                base_kwargs=query_params,
+            )
 
             logger.info(
                 f"Successfully retrieved {len(all_groups)} groups across {pagination_info['pages_fetched']} pages"

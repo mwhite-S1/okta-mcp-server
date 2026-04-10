@@ -46,6 +46,26 @@ from test_governance_live import (  # noqa: E402
 )
 
 
+def _get_first_active_user_id(token: str) -> str:
+    """Fetch the first ACTIVE user's ID, or '' if none found."""
+    resp = call("GET", "/api/v1/users?filter=status+eq+%22ACTIVE%22&limit=1", token=token)
+    if resp.status_code != 200:
+        return ""
+    body = resp.json()
+    users = body if isinstance(body, list) else _items(body)
+    return users[0]["id"] if users else ""
+
+
+def _get_first_app_id(token: str) -> str:
+    """Fetch the first application's ID, or '' if none found."""
+    resp = call("GET", "/api/v1/apps?limit=1", token=token)
+    if resp.status_code != 200:
+        return ""
+    body = resp.json()
+    apps = body if isinstance(body, list) else _items(body)
+    return apps[0]["id"] if apps else ""
+
+
 # ---------------------------------------------------------------------------
 # Session-scoped auth / shared data
 # ---------------------------------------------------------------------------
@@ -105,3 +125,23 @@ def entry_id(catalog_info):
 @pytest.fixture(scope="session")
 def resource_id(catalog_info):
     return catalog_info[1]
+
+
+# ---------------------------------------------------------------------------
+# Shared resource lookups (avoid repeated API calls across test files)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def first_user_id(token):
+    """First ACTIVE user ID. Used by factor, credential, and session tests."""
+    uid = _get_first_active_user_id(token)
+    print(f"\n  [fixture] first_user_id: {uid!r}")
+    return uid
+
+
+@pytest.fixture(scope="session")
+def first_app_id(token):
+    """First application ID. Used by schema and provisioning tests."""
+    aid = _get_first_app_id(token)
+    print(f"\n  [fixture] first_app_id: {aid!r}")
+    return aid

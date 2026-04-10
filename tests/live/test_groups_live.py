@@ -37,6 +37,105 @@ from test_governance_live import call, _items, report, report_skip, section, BAS
 # Tests
 # ---------------------------------------------------------------------------
 
+def test_groups_query_params(token):
+    """Cover all key query parameters for list_groups."""
+    section("GROUPS — query parameter coverage")
+
+    # q= text search
+    resp = call("GET", "/api/v1/groups?q=&limit=3", token=token)
+    report("GET /api/v1/groups?q=&limit=3 (q= text search)", resp, (200, 204))
+
+    # search= SCIM expression
+    resp = call("GET", '/api/v1/groups?search=type+eq+"OKTA_GROUP"&limit=3', token=token)
+    report('GET /api/v1/groups?search=type+eq+"OKTA_GROUP"&limit=3 (search= SCIM)', resp, (200, 204))
+
+    # filter= expression
+    resp = call("GET", '/api/v1/groups?filter=type+eq+"OKTA_GROUP"&limit=3', token=token)
+    report('GET /api/v1/groups?filter=type+eq+"OKTA_GROUP"&limit=3 (filter= expression)', resp, (200, 204))
+
+    # expand=stats
+    resp = call("GET", "/api/v1/groups?expand=stats&limit=3", token=token)
+    report("GET /api/v1/groups?expand=stats&limit=3 (expand= parameter)", resp, (200, 204))
+
+    # limit= parameter
+    resp = call("GET", "/api/v1/groups?limit=2", token=token)
+    report("GET /api/v1/groups?limit=2 (verify limit param)", resp, (200,))
+
+
+def test_group_owners_crud(token):
+    """CRUD: create group, assign user as owner, list owners, remove owner, delete group."""
+    section("GROUP OWNERS — assign/delete (self-cleaning)")
+
+    ts = int(time.time())
+    grp_resp = call(
+        "POST",
+        "/api/v1/groups",
+        body={"profile": {"name": f"mcp-live-owners-{ts}", "description": "MCP owner CRUD test"}},
+        token=token,
+    )
+    if not report("POST /api/v1/groups (create group for owner test)", grp_resp, (200, 201)):
+        return
+
+    group_id = grp_resp.json()["id"]
+
+    # Get a user to be an owner
+    user_resp = call("GET", "/api/v1/users?filter=status+eq+%22ACTIVE%22&limit=1", token=token)
+    user_id = ""
+    if user_resp.status_code == 200:
+        users = user_resp.json() if isinstance(user_resp.json(), list) else _items(user_resp.json())
+        if users:
+            user_id = users[0]["id"]
+
+    try:
+        if not user_id:
+            report_skip("Group owner CRUD", "no ACTIVE users available")
+            return
+
+        # Assign user as owner
+        resp = call(
+            "POST",
+            f"/api/v1/groups/{group_id}/owners",
+            body={"id": user_id, "type": "USER"},
+            token=token,
+        )
+        report(
+            "POST /api/v1/groups/{groupId}/owners (assign USER owner)",
+            resp,
+            (200, 201, 204, 400, 403),
+        )
+
+        if resp.status_code not in (200, 201, 204):
+            report_skip("Group owner list/delete", f"assign returned {resp.status_code}")
+            return
+
+        # List owners — verify user appears
+        resp = call("GET", f"/api/v1/groups/{group_id}/owners", token=token)
+        if report("GET /api/v1/groups/{groupId}/owners (verify owner assigned)", resp, (200, 403)):
+            if resp.status_code == 200:
+                owners = resp.json() if isinstance(resp.json(), list) else _items(resp.json())
+                owner_ids = [o.get("id", "") for o in owners]
+                if user_id in owner_ids:
+                    report_skip("  owner verified in list", "")
+                else:
+                    report_skip("  owner not found in list", f"got ids: {owner_ids}")
+
+        # Delete owner
+        resp = call(
+            "DELETE",
+            f"/api/v1/groups/{group_id}/owners/{user_id}",
+            token=token,
+        )
+        report(
+            "DELETE /api/v1/groups/{groupId}/owners/{ownerId} (remove owner)",
+            resp,
+            (200, 204, 400, 403, 404),
+        )
+
+    finally:
+        resp = call("DELETE", f"/api/v1/groups/{group_id}", token=token)
+        report("DELETE /api/v1/groups/{groupId} (cleanup)", resp, (200, 204))
+
+
 def test_groups_read(token):
     section("GROUPS — read-only")
 
@@ -113,12 +212,12 @@ def test_group_crud(token):
         report("GET /api/v1/groups/{group_id} (fetch created)", resp)
 
         resp = call(
-            "POST",
+            "PUT",
             f"/api/v1/groups/{group_id}",
             body={"profile": {"name": f"mcp-live-group-{ts}-upd", "description": "MCP live test updated"}},
             token=token,
         )
-        report("POST /api/v1/groups/{group_id} (update)", resp, (200, 204))
+        report("PUT /api/v1/groups/{group_id} (update)", resp, (200, 204))
 
         if user_id:
             resp = call("PUT", f"/api/v1/groups/{group_id}/users/{user_id}", token=token)

@@ -104,8 +104,8 @@ class TestListUsers:
 
         # limit=5 should be clamped to 20
         await list_users(ctx=ctx_elicit_accept_true, limit=5)
-        call_params = client.list_users.call_args[0][0]
-        assert call_params.get("limit") == "20"
+        call_params = client.list_users.call_args.kwargs
+        assert call_params.get("limit") == 20
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
@@ -116,8 +116,8 @@ class TestListUsers:
         mock_get_client.return_value = client
 
         await list_users(ctx=ctx_elicit_accept_true, limit=500)
-        call_params = client.list_users.call_args[0][0]
-        assert call_params.get("limit") == "100"
+        call_params = client.list_users.call_args.kwargs
+        assert call_params.get("limit") == 100
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
@@ -128,7 +128,7 @@ class TestListUsers:
         mock_get_client.return_value = client
 
         await list_users(ctx=ctx_elicit_accept_true, search='profile.department eq "Engineering"')
-        call_params = client.list_users.call_args[0][0]
+        call_params = client.list_users.call_args.kwargs
         assert "search" in call_params
 
 

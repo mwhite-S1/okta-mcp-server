@@ -94,8 +94,8 @@ class TestGetLogs:
         mock_get_client.return_value = client
 
         await get_logs(ctx=ctx_elicit_accept_true, limit=5)
-        call_params = client.get_logs.call_args[0][0]
-        assert call_params.get("limit") == "20"
+        call_params = client.get_logs.call_args.kwargs
+        assert call_params.get("limit") == 20
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
@@ -106,8 +106,8 @@ class TestGetLogs:
         mock_get_client.return_value = client
 
         await get_logs(ctx=ctx_elicit_accept_true, limit=500)
-        call_params = client.get_logs.call_args[0][0]
-        assert call_params.get("limit") == "100"
+        call_params = client.get_logs.call_args.kwargs
+        assert call_params.get("limit") == 100
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
@@ -118,7 +118,7 @@ class TestGetLogs:
         mock_get_client.return_value = client
 
         await get_logs(ctx=ctx_elicit_accept_true, since="2024-01-01T00:00:00.000Z")
-        call_params = client.get_logs.call_args[0][0]
+        call_params = client.get_logs.call_args.kwargs
         assert "since" in call_params
 
     @pytest.mark.asyncio
@@ -130,7 +130,7 @@ class TestGetLogs:
         mock_get_client.return_value = client
 
         await get_logs(ctx=ctx_elicit_accept_true, until="2024-12-31T23:59:59.000Z")
-        call_params = client.get_logs.call_args[0][0]
+        call_params = client.get_logs.call_args.kwargs
         assert "until" in call_params
 
     @pytest.mark.asyncio
@@ -142,7 +142,7 @@ class TestGetLogs:
         mock_get_client.return_value = client
 
         await get_logs(ctx=ctx_elicit_accept_true, filter='eventType eq "user.session.start"')
-        call_params = client.get_logs.call_args[0][0]
+        call_params = client.get_logs.call_args.kwargs
         assert "filter" in call_params
 
     @pytest.mark.asyncio
@@ -154,7 +154,7 @@ class TestGetLogs:
         mock_get_client.return_value = client
 
         await get_logs(ctx=ctx_elicit_accept_true, q="user.session")
-        call_params = client.get_logs.call_args[0][0]
+        call_params = client.get_logs.call_args.kwargs
         assert "q" in call_params
 
     @pytest.mark.asyncio
@@ -200,6 +200,6 @@ class TestGetLogs:
         )
 
         assert result["total_fetched"] == 1
-        call_params = client.get_logs.call_args[0][0]
+        call_params = client.get_logs.call_args.kwargs
         assert "since" in call_params
         assert "until" in call_params
