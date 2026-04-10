@@ -92,3 +92,27 @@ DELETE_DEVICE = (
     "Are you sure you want to permanently delete device {device_id}? "
     "The device must already be deactivated. This action cannot be undone."
 )
+
+# ---------------------------------------------------------------------------
+# Governance
+# ---------------------------------------------------------------------------
+
+DELETE_GOVERNANCE_LABEL = (
+    "Are you sure you want to delete governance label {label_id}? "
+    "The label must have no values assigned to any resources. This action cannot be undone."
+)
+
+REVOKE_PRINCIPAL_ACCESS = (
+    "Are you sure you want to revoke access for principal {principal_id} "
+    "on resource {resource_id}? This action cannot be undone."
+)
+
+CANCEL_ACCESS_REQUEST = (
+    "Are you sure you want to cancel access request {request_id}? "
+    "This action cannot be undone."
+)
+
+DELETE_REQUEST_CONDITION = (
+    "Are you sure you want to delete request condition {condition_id} "
+    "from resource {resource_id}? This action cannot be undone."
+)

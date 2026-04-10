@@ -66,6 +66,17 @@ def main():
     logger.info("Starting Okta MCP Server")
     from okta_mcp_server.tools.applications import applications  # noqa: F401
     from okta_mcp_server.tools.devices import devices  # noqa: F401
+    from okta_mcp_server.tools.governance import access_requests  # noqa: F401
+    from okta_mcp_server.tools.governance import certifications  # noqa: F401
+    from okta_mcp_server.tools.governance import collections  # noqa: F401
+    from okta_mcp_server.tools.governance import delegates  # noqa: F401
+    from okta_mcp_server.tools.governance import entitlements  # noqa: F401
+    from okta_mcp_server.tools.governance import labels  # noqa: F401
+    from okta_mcp_server.tools.governance import operations  # noqa: F401
+    from okta_mcp_server.tools.governance import resource_owners  # noqa: F401
+    from okta_mcp_server.tools.governance import risk_rules  # noqa: F401
+    from okta_mcp_server.tools.governance import settings  # noqa: F401
+    from okta_mcp_server.tools.governance import enduser  # noqa: F401
     from okta_mcp_server.tools.groups import groups  # noqa: F401
     from okta_mcp_server.tools.policies import policies  # noqa: F401
     from okta_mcp_server.tools.system_logs import system_logs  # noqa: F401
