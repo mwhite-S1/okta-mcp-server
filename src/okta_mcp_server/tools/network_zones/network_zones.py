@@ -5,7 +5,10 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and limitations under the License.
 
+import json as _json
+import re
 from typing import Dict, Optional
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from loguru import logger
 from mcp.server.fastmcp import Context
@@ -15,6 +18,46 @@ from okta_mcp_server.utils.client import get_okta_client
 from okta_mcp_server.utils.elicitation import DeleteConfirmation, elicit_or_fallback
 from okta_mcp_server.utils.messages import DELETE_NETWORK_ZONE
 from okta_mcp_server.utils.validation import validate_ids
+
+
+async def _execute(client, method: str, path: str, body: dict = None):
+    """Make a direct API call bypassing SDK Pydantic deserialization.
+
+    Returns (response, body, error). response carries HTTP headers (e.g. Link
+    for pagination cursors); body is the parsed JSON dict or list.
+    """
+    request_executor = client.get_request_executor()
+    url = f"{client.get_base_url()}{path}"
+    request, error = await request_executor.create_request(method, url, body or {})
+    if error:
+        return None, None, error
+    response, response_body, error = await request_executor.execute(request)
+    if error:
+        return None, None, error
+    if not response_body:
+        return response, None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response, response_body, None
+
+
+def _parse_next_cursor(response) -> Optional[str]:
+    """Extract the 'after' cursor from the Link: <URL>; rel="next" response header."""
+    if response is None:
+        return None
+    try:
+        link = response.headers.get("link") or response.headers.get("Link") or ""
+        match = re.search(r'<([^>]+)>;\s*rel="next"', link)
+        if not match:
+            return None
+        params = parse_qs(urlparse(match.group(1)).query)
+        values = params.get("after", [])
+        return values[0] if values else None
+    except Exception:
+        return None
 
 
 @mcp.tool()
@@ -43,23 +86,30 @@ async def list_network_zones(
 
     try:
         client = await get_okta_client(manager)
-        kwargs = {}
+        params = {}
         if filter:
-            kwargs["filter"] = filter
+            params["filter"] = filter
         if after:
-            kwargs["after"] = after
+            params["after"] = after
         if limit:
-            kwargs["limit"] = limit
+            params["limit"] = limit
 
-        zones, _, err = await client.list_network_zones(**kwargs)
+        path = f"/api/v1/zones?{urlencode(params)}" if params else "/api/v1/zones"
+        response, zones, err = await _execute(client, "GET", path)
 
         if err:
             logger.error(f"Error listing network zones: {err}")
             return {"error": str(err)}
 
-        items = [z.to_dict() if hasattr(z, "to_dict") else z for z in (zones or [])]
-        logger.info(f"Retrieved {len(items)} network zone(s)")
-        return {"items": items, "total_fetched": len(items)}
+        items = zones if isinstance(zones, list) else ([zones] if zones else [])
+        next_cursor = _parse_next_cursor(response)
+        logger.info(f"Retrieved {len(items)} network zone(s) (has_more={next_cursor is not None})")
+        return {
+            "items": items,
+            "total_fetched": len(items),
+            "has_more": next_cursor is not None,
+            "next_cursor": next_cursor,
+        }
 
     except Exception as e:
         logger.error(f"Exception listing network zones: {type(e).__name__}: {e}")
@@ -91,14 +141,14 @@ async def create_network_zone(
 
     try:
         client = await get_okta_client(manager)
-        created, _, err = await client.create_network_zone(zone)
+        _, created, err = await _execute(client, "POST", "/api/v1/zones", body=zone)
 
         if err:
             logger.error(f"Error creating network zone: {err}")
             return {"error": str(err)}
 
-        result = created.to_dict() if hasattr(created, "to_dict") else created
-        logger.info(f"Created network zone: {result.get('id', 'unknown')}")
+        result = created if isinstance(created, dict) else (created.to_dict() if hasattr(created, "to_dict") else created)
+        logger.info(f"Created network zone: {result.get('id', 'unknown') if isinstance(result, dict) else 'unknown'}")
         return result
 
     except Exception as e:
@@ -164,13 +214,13 @@ async def replace_network_zone(
 
     try:
         client = await get_okta_client(manager)
-        updated, _, err = await client.replace_network_zone(zone_id, zone)
+        _, updated, err = await _execute(client, "PUT", f"/api/v1/zones/{zone_id}", body=zone)
 
         if err:
             logger.error(f"Error replacing network zone {zone_id}: {err}")
             return {"error": str(err)}
 
-        result = updated.to_dict() if hasattr(updated, "to_dict") else updated
+        result = updated if isinstance(updated, dict) else (updated.to_dict() if hasattr(updated, "to_dict") else updated)
         logger.info(f"Replaced network zone {zone_id}")
         return result
 

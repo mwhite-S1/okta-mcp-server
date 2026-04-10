@@ -65,7 +65,7 @@ class TestDeletePolicyElicitation:
     @patch("okta_mcp_server.tools.policies.policies.get_okta_client")
     async def test_okta_api_error(self, mock_get_client, ctx_elicit_accept_true):
         client = AsyncMock()
-        client.delete_policy.return_value = (None, "API Error: policy not found")
+        client.delete_policy.return_value = (None, None, "API Error: policy not found")
         mock_get_client.return_value = client
 
         result = await delete_policy(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)

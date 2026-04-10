@@ -75,7 +75,7 @@ async def get_logs(
 
         query_params = build_query_params(after=after, limit=limit, since=since, until=until, filter=filter, q=q)
 
-        logs, response, err = await client.get_logs(**query_params)
+        logs, response, err = await client.list_log_events(**query_params)
 
         if err:
             logger.error(f"Okta API error while retrieving system logs: {err}")
@@ -97,7 +97,7 @@ async def get_logs(
             logger.info(f"fetch_all=True, auto-paginating from initial {log_count} log entries")
             all_logs, pagination_info = await paginate_all_results(
                 response, logs,
-                client_method=client.get_logs,
+                client_method=client.list_log_events,
                 base_kwargs=query_params,
             )
 

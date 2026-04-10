@@ -43,7 +43,7 @@ class TestGetLogs:
         entry = _make_log_entry()
         response = _make_paginated_response()
         client = AsyncMock()
-        client.get_logs.return_value = ([entry], response, None)
+        client.list_log_events.return_value = ([entry], response, None)
         mock_get_client.return_value = client
 
         result = await get_logs(ctx=ctx_elicit_accept_true)
@@ -57,7 +57,7 @@ class TestGetLogs:
     async def test_empty_result(self, mock_get_client, ctx_elicit_accept_true):
         response = _make_paginated_response()
         client = AsyncMock()
-        client.get_logs.return_value = ([], response, None)
+        client.list_log_events.return_value = ([], response, None)
         mock_get_client.return_value = client
 
         result = await get_logs(ctx=ctx_elicit_accept_true)
@@ -69,7 +69,7 @@ class TestGetLogs:
     @patch(PATCH_CLIENT)
     async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
         client = AsyncMock()
-        client.get_logs.return_value = (None, None, "Insufficient permissions")
+        client.list_log_events.return_value = (None, None, "Insufficient permissions")
         mock_get_client.return_value = client
 
         result = await get_logs(ctx=ctx_elicit_accept_true)
@@ -90,11 +90,11 @@ class TestGetLogs:
     async def test_limit_clamped_below_minimum(self, mock_get_client, ctx_elicit_accept_true):
         response = _make_paginated_response()
         client = AsyncMock()
-        client.get_logs.return_value = ([], response, None)
+        client.list_log_events.return_value = ([], response, None)
         mock_get_client.return_value = client
 
         await get_logs(ctx=ctx_elicit_accept_true, limit=5)
-        call_params = client.get_logs.call_args.kwargs
+        call_params = client.list_log_events.call_args.kwargs
         assert call_params.get("limit") == 20
 
     @pytest.mark.asyncio
@@ -102,11 +102,11 @@ class TestGetLogs:
     async def test_limit_clamped_above_maximum(self, mock_get_client, ctx_elicit_accept_true):
         response = _make_paginated_response()
         client = AsyncMock()
-        client.get_logs.return_value = ([], response, None)
+        client.list_log_events.return_value = ([], response, None)
         mock_get_client.return_value = client
 
         await get_logs(ctx=ctx_elicit_accept_true, limit=500)
-        call_params = client.get_logs.call_args.kwargs
+        call_params = client.list_log_events.call_args.kwargs
         assert call_params.get("limit") == 100
 
     @pytest.mark.asyncio
@@ -114,11 +114,11 @@ class TestGetLogs:
     async def test_since_param_forwarded(self, mock_get_client, ctx_elicit_accept_true):
         response = _make_paginated_response()
         client = AsyncMock()
-        client.get_logs.return_value = ([], response, None)
+        client.list_log_events.return_value = ([], response, None)
         mock_get_client.return_value = client
 
         await get_logs(ctx=ctx_elicit_accept_true, since="2024-01-01T00:00:00.000Z")
-        call_params = client.get_logs.call_args.kwargs
+        call_params = client.list_log_events.call_args.kwargs
         assert "since" in call_params
 
     @pytest.mark.asyncio
@@ -126,11 +126,11 @@ class TestGetLogs:
     async def test_until_param_forwarded(self, mock_get_client, ctx_elicit_accept_true):
         response = _make_paginated_response()
         client = AsyncMock()
-        client.get_logs.return_value = ([], response, None)
+        client.list_log_events.return_value = ([], response, None)
         mock_get_client.return_value = client
 
         await get_logs(ctx=ctx_elicit_accept_true, until="2024-12-31T23:59:59.000Z")
-        call_params = client.get_logs.call_args.kwargs
+        call_params = client.list_log_events.call_args.kwargs
         assert "until" in call_params
 
     @pytest.mark.asyncio
@@ -138,11 +138,11 @@ class TestGetLogs:
     async def test_filter_param_forwarded(self, mock_get_client, ctx_elicit_accept_true):
         response = _make_paginated_response()
         client = AsyncMock()
-        client.get_logs.return_value = ([], response, None)
+        client.list_log_events.return_value = ([], response, None)
         mock_get_client.return_value = client
 
         await get_logs(ctx=ctx_elicit_accept_true, filter='eventType eq "user.session.start"')
-        call_params = client.get_logs.call_args.kwargs
+        call_params = client.list_log_events.call_args.kwargs
         assert "filter" in call_params
 
     @pytest.mark.asyncio
@@ -150,11 +150,11 @@ class TestGetLogs:
     async def test_query_param_forwarded(self, mock_get_client, ctx_elicit_accept_true):
         response = _make_paginated_response()
         client = AsyncMock()
-        client.get_logs.return_value = ([], response, None)
+        client.list_log_events.return_value = ([], response, None)
         mock_get_client.return_value = client
 
         await get_logs(ctx=ctx_elicit_accept_true, q="user.session")
-        call_params = client.get_logs.call_args.kwargs
+        call_params = client.list_log_events.call_args.kwargs
         assert "q" in call_params
 
     @pytest.mark.asyncio
@@ -163,7 +163,7 @@ class TestGetLogs:
         entry = _make_log_entry()
         response = _make_paginated_response(has_next=True)
         client = AsyncMock()
-        client.get_logs.return_value = ([entry], response, None)
+        client.list_log_events.return_value = ([entry], response, None)
         mock_get_client.return_value = client
 
         result = await get_logs(ctx=ctx_elicit_accept_true)
@@ -176,7 +176,7 @@ class TestGetLogs:
         entries = [_make_log_entry(f"event.type.{i}") for i in range(5)]
         response = _make_paginated_response()
         client = AsyncMock()
-        client.get_logs.return_value = (entries, response, None)
+        client.list_log_events.return_value = (entries, response, None)
         mock_get_client.return_value = client
 
         result = await get_logs(ctx=ctx_elicit_accept_true)
@@ -190,7 +190,7 @@ class TestGetLogs:
         entry = _make_log_entry()
         response = _make_paginated_response()
         client = AsyncMock()
-        client.get_logs.return_value = ([entry], response, None)
+        client.list_log_events.return_value = ([entry], response, None)
         mock_get_client.return_value = client
 
         result = await get_logs(
@@ -200,6 +200,6 @@ class TestGetLogs:
         )
 
         assert result["total_fetched"] == 1
-        call_params = client.get_logs.call_args.kwargs
+        call_params = client.list_log_events.call_args.kwargs
         assert "since" in call_params
         assert "until" in call_params

@@ -58,7 +58,7 @@ class TestDeleteGroupElicitation:
     @patch("okta_mcp_server.tools.groups.groups.get_okta_client")
     async def test_okta_api_error(self, mock_get_client, ctx_elicit_accept_true):
         client = AsyncMock()
-        client.delete_group.return_value = (None, "API Error: group not found")
+        client.delete_group.return_value = (None, None, "API Error: group not found")
         mock_get_client.return_value = client
 
         result = await delete_group(GROUP_ID, ctx=ctx_elicit_accept_true)
@@ -133,7 +133,7 @@ class TestConfirmDeleteGroupDeprecated:
     @patch("okta_mcp_server.tools.groups.groups.get_okta_client")
     async def test_okta_api_error(self, mock_get_client, ctx_elicit_accept_true):
         client = AsyncMock()
-        client.delete_group.return_value = (None, "API Error")
+        client.delete_group.return_value = (None, None, "API Error")
         mock_get_client.return_value = client
 
         result = await confirm_delete_group(GROUP_ID, "DELETE", ctx=ctx_elicit_accept_true)

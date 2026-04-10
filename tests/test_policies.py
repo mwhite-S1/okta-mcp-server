@@ -37,6 +37,10 @@ from okta_mcp_server.tools.policies.policies import (
 POLICY_ID = "00p1234567890ABCDEF"
 RULE_ID = "0pr1234567890ABCDEF"
 PATCH_CLIENT = "okta_mcp_server.tools.policies.policies.get_okta_client"
+PATCH_EXECUTE = "okta_mcp_server.tools.policies.policies._execute"
+
+POLICY_DICT = {"id": POLICY_ID, "name": "Test Policy", "type": "OKTA_SIGN_ON", "status": "ACTIVE"}
+RULE_DICT = {"id": RULE_ID, "name": "Test Rule", "status": "ACTIVE"}
 
 
 def _make_policy(policy_id=POLICY_ID, name="Test Policy", policy_type="OKTA_SIGN_ON"):
@@ -63,6 +67,12 @@ def _make_resp(has_next=False, next_token=None):
     return resp
 
 
+def _make_response(link_header=None):
+    response = MagicMock()
+    response.headers.get = MagicMock(return_value=link_header or "")
+    return response
+
+
 # ---------------------------------------------------------------------------
 # list_policies
 # ---------------------------------------------------------------------------
@@ -70,35 +80,37 @@ def _make_resp(has_next=False, next_token=None):
 class TestListPolicies:
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_returns_policies(self, mock_get_client, ctx_elicit_accept_true):
-        policy = _make_policy()
-        client = AsyncMock()
-        client.list_policies.return_value = ([policy], None, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_returns_policies(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), [POLICY_DICT], None)
 
         result = await list_policies(ctx=ctx_elicit_accept_true, type="OKTA_SIGN_ON")
 
-        assert "policies" in result
-        assert len(result["policies"]) == 1
-        assert result["policies"][0]["id"] == POLICY_ID
+        assert "items" in result
+        assert len(result["items"]) == 1
+        assert result["items"][0]["id"] == POLICY_ID
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_empty_result(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.list_policies.return_value = ([], None, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_empty_result(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), None, None)
 
         result = await list_policies(ctx=ctx_elicit_accept_true, type="PASSWORD")
 
-        assert result == {"policies": []}
+        assert "items" in result
+        assert result["items"] == []
+        assert result["total_fetched"] == 0
+        assert result["has_more"] is False
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.list_policies.return_value = (None, None, "Insufficient permissions")
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_api_error(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (None, None, "Insufficient permissions")
 
         result = await list_policies(ctx=ctx_elicit_accept_true, type="OKTA_SIGN_ON")
 
@@ -115,36 +127,55 @@ class TestListPolicies:
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_limit_clamped_below_minimum(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.list_policies.return_value = ([], None, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_limit_clamped_below_minimum(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), None, None)
 
         await list_policies(ctx=ctx_elicit_accept_true, type="OKTA_SIGN_ON", limit=5)
-        call_params = client.list_policies.call_args.kwargs
-        assert call_params.get("limit") == 20
+
+        call_args = mock_execute.call_args
+        path_arg = call_args[0][2]
+        assert "limit=20" in path_arg, f"Expected limit=20 in path, got: {path_arg}"
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_limit_clamped_above_maximum(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.list_policies.return_value = ([], None, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_limit_clamped_above_maximum(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), None, None)
 
         await list_policies(ctx=ctx_elicit_accept_true, type="OKTA_SIGN_ON", limit=500)
-        call_params = client.list_policies.call_args.kwargs
-        assert call_params.get("limit") == 100
+
+        call_args = mock_execute.call_args
+        path_arg = call_args[0][2]
+        assert "limit=100" in path_arg, f"Expected limit=100 in path, got: {path_arg}"
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_status_filter_forwarded(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.list_policies.return_value = ([], None, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_status_filter_forwarded(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), None, None)
 
         await list_policies(ctx=ctx_elicit_accept_true, type="OKTA_SIGN_ON", status="ACTIVE")
-        call_params = client.list_policies.call_args.kwargs
-        assert call_params.get("status") == "ACTIVE"
+
+        call_args = mock_execute.call_args
+        path_arg = call_args[0][2]
+        assert "status=ACTIVE" in path_arg, f"Expected status=ACTIVE in path, got: {path_arg}"
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_pagination_metadata_with_next(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        link = '<https://example.okta.com/api/v1/policies?after=cursor123>; rel="next"'
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(link_header=link), [POLICY_DICT], None)
+
+        result = await list_policies(ctx=ctx_elicit_accept_true, type="OKTA_SIGN_ON")
+
+        assert result["has_more"] is True
+        assert result["next_cursor"] == "cursor123"
 
 
 # ---------------------------------------------------------------------------
@@ -154,16 +185,14 @@ class TestListPolicies:
 class TestGetPolicy:
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_returns_policy(self, mock_get_client, ctx_elicit_accept_true):
-        policy = _make_policy()
-        client = AsyncMock()
-        client.get_policy.return_value = (policy, None, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_returns_policy(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), POLICY_DICT, None)
 
         result = await get_policy(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)
 
         assert result["id"] == POLICY_ID
-        client.get_policy.assert_awaited_once_with(POLICY_ID)
 
     @pytest.mark.asyncio
     async def test_invalid_id_rejected(self, ctx_elicit_accept_true):
@@ -173,10 +202,10 @@ class TestGetPolicy:
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.get_policy.return_value = (None, None, "Policy not found")
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_api_error(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (None, None, "Policy not found")
 
         result = await get_policy(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)
 
@@ -184,10 +213,10 @@ class TestGetPolicy:
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_exception(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.get_policy.side_effect = Exception("Connection error")
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_exception(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.side_effect = Exception("Connection error")
 
         result = await get_policy(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)
 
@@ -339,26 +368,23 @@ class TestActivatePolicy:
 class TestListPolicyRules:
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_returns_rules(self, mock_get_client, ctx_elicit_accept_true):
-        rule = _make_rule()
-        resp = _make_resp()
-        client = AsyncMock()
-        client.list_policy_rules.return_value = ([rule], resp, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_returns_rules(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), [RULE_DICT], None)
 
         result = await list_policy_rules(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)
 
         assert "rules" in result
         assert len(result["rules"]) == 1
         assert result["rules"][0]["id"] == RULE_ID
-        assert result["has_next"] is False
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_empty_result(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.list_policy_rules.return_value = ([], None, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_empty_result(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), None, None)
 
         result = await list_policy_rules(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)
 
@@ -366,10 +392,10 @@ class TestListPolicyRules:
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.list_policy_rules.return_value = (None, None, "Policy not found")
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_api_error(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (None, None, "Policy not found")
 
         result = await list_policy_rules(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)
 
@@ -377,10 +403,10 @@ class TestListPolicyRules:
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_exception(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.list_policy_rules.side_effect = Exception("Connection error")
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_exception(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.side_effect = Exception("Connection error")
 
         result = await list_policy_rules(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)
 
@@ -400,16 +426,14 @@ class TestListPolicyRules:
 class TestGetPolicyRule:
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_returns_rule(self, mock_get_client, ctx_elicit_accept_true):
-        rule = _make_rule()
-        client = AsyncMock()
-        client.get_policy_rule.return_value = (rule, None, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_returns_rule(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), RULE_DICT, None)
 
         result = await get_policy_rule(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID, rule_id=RULE_ID)
 
         assert result["id"] == RULE_ID
-        client.get_policy_rule.assert_awaited_once_with(POLICY_ID, RULE_ID)
 
     @pytest.mark.asyncio
     async def test_invalid_policy_id_rejected(self, ctx_elicit_accept_true):
@@ -425,10 +449,10 @@ class TestGetPolicyRule:
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.get_policy_rule.return_value = (None, None, "Rule not found")
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_api_error(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (None, None, "Rule not found")
 
         result = await get_policy_rule(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID, rule_id=RULE_ID)
 
@@ -436,10 +460,10 @@ class TestGetPolicyRule:
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_exception(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.get_policy_rule.side_effect = Exception("Connection error")
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_exception(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.side_effect = Exception("Connection error")
 
         result = await get_policy_rule(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID, rule_id=RULE_ID)
 
@@ -613,7 +637,8 @@ class TestActivatePolicyRule:
 class TestPolicyLifecycle:
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_policy_and_rule_lifecycle(self, mock_get_client, ctx_elicit_accept_true):
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_policy_and_rule_lifecycle(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
         created_policy = _make_policy(policy_id="00pnew123", name="New Policy")
         updated_policy = _make_policy(policy_id="00pnew123", name="Updated Policy")
         updated_policy.as_dict.return_value = {
@@ -623,19 +648,25 @@ class TestPolicyLifecycle:
 
         client = AsyncMock()
         client.create_policy.return_value = (created_policy, None, None)
-        client.get_policy.return_value = (created_policy, None, None)
         client.update_policy.return_value = (updated_policy, None, None)
         client.activate_policy.return_value = (None, None)
         client.create_policy_rule.return_value = (created_rule, None, None)
         client.activate_policy_rule.return_value = (None, None)
         mock_get_client.return_value = client
 
+        # _execute used by get_policy
+        mock_execute.return_value = (
+            _make_response(),
+            {"id": "00pnew123", "name": "New Policy", "type": "OKTA_SIGN_ON", "status": "ACTIVE"},
+            None,
+        )
+
         # Step 1: create policy
         policy_data = {"type": "OKTA_SIGN_ON", "name": "New Policy"}
         create_result = await create_policy(ctx=ctx_elicit_accept_true, policy_data=policy_data)
         assert create_result["id"] == "00pnew123"
 
-        # Step 2: get policy
+        # Step 2: get policy (uses _execute)
         get_result = await get_policy(ctx=ctx_elicit_accept_true, policy_id="00pnew123")
         assert get_result["id"] == "00pnew123"
 

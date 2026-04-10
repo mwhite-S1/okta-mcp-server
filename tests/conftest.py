@@ -189,9 +189,11 @@ def mock_okta_client():
     """Return a ``MagicMock`` with async Okta client methods pre-configured."""
     client = AsyncMock()
     # Defaults: success, no error
-    client.delete_group.return_value = (None, None)
+    # Operations that return data → (result, ApiResponse, error) 3-tuple
+    client.delete_group.return_value = (None, None, None)
+    client.delete_policy.return_value = (None, None, None)
+    # Operations that return no data → (ApiResponse, error) 2-tuple
     client.delete_application.return_value = (None, None)
-    client.delete_policy.return_value = (None, None)
     client.delete_policy_rule.return_value = (None, None)
     client.deactivate_user.return_value = (None, None)
     client.deactivate_or_delete_user.return_value = (None, None)

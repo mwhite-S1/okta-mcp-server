@@ -29,29 +29,42 @@ async def list_users(
     limit: Optional[int] = None,
 ) -> dict:
     """List all the users from the Okta organization with pagination support.
-    If search, filter, or q is specified, it will list only those users that satisfy the condition.
-    Use after and limit for pagination.
-    Use fetch_all=True to automatically fetch all pages of results.
     By default, it will only fetch users whose status is not "DEPROVISIONED".
 
+    PARAMETER SELECTION GUIDE — pick one, do not combine:
+        search (PREFERRED): SCIM 2.0 filter expression. Use for exact lookups, status
+            filters, or any query involving special characters. Indexed and reliable.
+            Supports eq, sw (starts-with), co (contains), pr (present), gt, lt, and, or, not.
+              by login (exact):  search='profile.login eq "jane.doe@example.com"'
+              by email:          search='profile.email eq "jane@example.com"'
+              by status:         search='status eq "ACTIVE"'
+              by department:     search='profile.department eq "Engineering"'
+              combined:          search='status eq "ACTIVE" and profile.department eq "Sales"'
+              locked/recovery:   search='status eq "LOCKED_OUT" or status eq "RECOVERY"'
+
+        filter: Older Okta filter expression. Prefer search instead; supports fewer
+            attributes and is not recommended for new queries.
+              example: filter='status eq "ACTIVE"'
+
+        q: Prefix text search across firstName, lastName, and email. Unreliable for
+            values with special characters. Only useful for casual name browsing.
+              example: q="Jane"   # matches users whose name/email starts with "Jane"
+
     Parameters:
-        search (str, optional): The value of the search string when searching for some specific set of users.
-        filter (str, optional): A filter string to filter users by Okta profile attributes.
-        q (str, optional): A query string to search users by Okta profile attributes.
+        search (str, optional): SCIM 2.0 filter expression (preferred for exact/reliable lookups).
+        filter (str, optional): Okta filter expression (legacy; prefer search).
+        q (str, optional): Prefix text search on name/email (avoid for special-character values).
         fetch_all (bool, optional): If True, automatically fetch all pages of results. Default: False.
         after (str, optional): Pagination cursor for fetching results after this point.
         limit (int, optional): Maximum number of users to return per page (min 20, max 100).
-        The search, filter, and q are performed on user profile attributes.
 
     Examples:
-        To search users whose organization is Okta use search=profile.organization eq "Okta"
-        To search users updated after 06/01/2013 but with a status of LOCKED_OUT or RECOVERY use
-        search=lastUpdated gt "2013-06-01T00:00:00.000Z" and (status eq "LOCKED_OUT" or status eq "RECOVERY")
-
-        For pagination:
-        - First call: list_users(search="profile.department eq \"Engineering\"")
-        - Next page: list_users(search="profile.department eq \"Engineering\"", after="cursor_value")
-        - All pages: list_users(search="profile.department eq \"Engineering\"", fetch_all=True)
+        Find a user by exact email:
+            list_users(search='profile.login eq "jane.doe@example.com"')
+        Find all active users in a department:
+            list_users(search='status eq "ACTIVE" and profile.department eq "Engineering"')
+        Fetch all users across all pages:
+            list_users(fetch_all=True)
 
     Returns:
         Dict containing:
@@ -179,7 +192,11 @@ async def get_user(user_id: str, ctx: Context = None) -> list:
         client = await get_okta_client(manager)
         logger.debug(f"Calling Okta API to get user {user_id}")
 
-        user = await client.get_user(user_id)
+        user, _, err = await client.get_user(user_id)
+
+        if err:
+            logger.error(f"Okta API error while getting user {user_id}: {err}")
+            return [f"Error: {err}"]
 
         logger.info(f"Successfully retrieved user: {user.profile.email if hasattr(user, 'profile') else user_id}")
         return [user]

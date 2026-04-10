@@ -198,6 +198,98 @@ def test_policy_mappings_read(token):
     report(f"GET /api/v1/policies/{{policyId}}/app (deprecated)", resp, (200, 404))
 
 
+def test_access_policy_crud(token):
+    """CRUD for ACCESS_POLICY (authentication policy) type — create, update, add rule, delete."""
+    section("POLICIES — ACCESS_POLICY CRUD (self-cleaning)")
+
+    ts = int(time.time())
+    body = {
+        "type": "ACCESS_POLICY",
+        "name": f"mcp-live-access-policy-{ts}",
+        "status": "INACTIVE",
+        "description": "MCP live test authentication policy",
+    }
+
+    policy_id = None
+    rule_id = None
+    try:
+        resp = call("POST", "/api/v1/policies", body=body, token=token)
+        if not report("POST /api/v1/policies (create ACCESS_POLICY)", resp, (200, 201, 400)):
+            return
+        if resp.status_code == 400:
+            report_skip("ACCESS_POLICY CRUD", f"create returned 400: {resp.text[:120]}")
+            return
+
+        policy_id = resp.json()["id"]
+
+        resp = call("GET", f"/api/v1/policies/{policy_id}", token=token)
+        report("GET /api/v1/policies/{policyId} (fetch created)", resp, (200,))
+
+        # Full replace via PUT
+        update_body = {
+            "type": "ACCESS_POLICY",
+            "name": f"mcp-live-access-policy-{ts}-upd",
+            "status": "INACTIVE",
+            "description": "MCP live test authentication policy updated",
+        }
+        resp = call("PUT", f"/api/v1/policies/{policy_id}", body=update_body, token=token)
+        report("PUT /api/v1/policies/{policyId} (update name)", resp, (200, 204))
+
+        # Add a rule — ACCESS_POLICY rules require type="ACCESS_POLICY", factorMode 1FA/2FA,
+        # and a possession constraint (NO_FACTOR without constraints is rejected by the API).
+        rule_body = {
+            "name": f"mcp-rule-{ts}",
+            "type": "ACCESS_POLICY",
+            "actions": {
+                "appSignOn": {
+                    "access": "ALLOW",
+                    "verificationMethod": {
+                        "factorMode": "1FA",
+                        "type": "ASSURANCE",
+                        "reauthenticateIn": "PT12H",
+                        "constraints": [{"possession": {"required": True, "deviceBound": "REQUIRED"}}],
+                    },
+                }
+            },
+        }
+        rule_resp = call("POST", f"/api/v1/policies/{policy_id}/rules", body=rule_body, token=token)
+        rule_created = report(
+            "POST /api/v1/policies/{policyId}/rules (create ACCESS_POLICY rule)",
+            rule_resp,
+            (200, 201, 400),
+        )
+
+        if rule_created and rule_resp.status_code in (200, 201):
+            rule_id = rule_resp.json()["id"]
+
+            resp = call("GET", f"/api/v1/policies/{policy_id}/rules/{rule_id}", token=token)
+            report("GET /api/v1/policies/{policyId}/rules/{ruleId}", resp, (200,))
+
+            resp = call(
+                "POST",
+                f"/api/v1/policies/{policy_id}/rules/{rule_id}/lifecycle/deactivate",
+                token=token,
+            )
+            report(
+                "POST /lifecycle/deactivate on ACCESS_POLICY rule",
+                resp,
+                (200, 204),
+            )
+
+            resp = call("DELETE", f"/api/v1/policies/{policy_id}/rules/{rule_id}", token=token)
+            report("DELETE /api/v1/policies/{policyId}/rules/{ruleId}", resp, (200, 204))
+            rule_id = None
+        elif rule_resp.status_code == 400:
+            report_skip("ACCESS_POLICY rule sub-tests", f"rule creation returned 400: {rule_resp.text[:120]}")
+
+    finally:
+        if rule_id:
+            call("DELETE", f"/api/v1/policies/{policy_id}/rules/{rule_id}", token=token)
+        if policy_id:
+            resp = call("DELETE", f"/api/v1/policies/{policy_id}", token=token)
+            report("DELETE /api/v1/policies/{policyId} (cleanup)", resp, (200, 204))
+
+
 def test_policy_crud(token):
     section("POLICIES — CRUD (self-cleaning)")
 

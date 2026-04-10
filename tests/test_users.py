@@ -183,7 +183,7 @@ class TestGetUser:
     async def test_returns_user(self, mock_get_client, ctx_elicit_accept_true):
         user = _make_user()
         client = AsyncMock()
-        client.get_user.return_value = user
+        client.get_user.return_value = (user, None, None)
         mock_get_client.return_value = client
 
         result = await get_user(user_id=USER_ID, ctx=ctx_elicit_accept_true)
@@ -298,7 +298,7 @@ class TestUserLifecycle:
 
         client = AsyncMock()
         client.create_user.return_value = (created_user, None, None)
-        client.get_user.return_value = created_user
+        client.get_user.return_value = (created_user, None, None)
         client.update_user.return_value = (updated_user, None, None)
         mock_get_client.return_value = client
 

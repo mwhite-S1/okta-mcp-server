@@ -208,20 +208,20 @@ class TestCreateGroup:
     async def test_creates_group(self, mock_get_client, ctx_elicit_accept_true):
         group = _make_group()
         client = AsyncMock()
-        client.create_group.return_value = (group, None, None)
+        client.add_group.return_value = (group, None, None)
         mock_get_client.return_value = client
 
         profile = {"name": "Test Group", "description": "A test group"}
         result = await create_group(profile=profile, ctx=ctx_elicit_accept_true)
 
         assert result == [group]
-        client.create_group.assert_awaited_once_with({"profile": profile})
+        client.add_group.assert_awaited_once_with({"profile": profile})
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
     async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
         client = AsyncMock()
-        client.create_group.return_value = (None, None, "Group name already exists")
+        client.add_group.return_value = (None, None, "Group name already exists")
         mock_get_client.return_value = client
 
         result = await create_group(profile={"name": "Dup"}, ctx=ctx_elicit_accept_true)
@@ -248,14 +248,14 @@ class TestUpdateGroup:
     async def test_updates_group(self, mock_get_client, ctx_elicit_accept_true):
         group = _make_group()
         client = AsyncMock()
-        client.update_group.return_value = (group, None, None)
+        client.replace_group.return_value = (group, None, None)
         mock_get_client.return_value = client
 
         profile = {"name": "Updated Group"}
         result = await update_group(group_id=GROUP_ID, profile=profile, ctx=ctx_elicit_accept_true)
 
         assert result == [group]
-        client.update_group.assert_awaited_once_with(GROUP_ID, {"profile": profile})
+        client.replace_group.assert_awaited_once_with(GROUP_ID, {"profile": profile})
 
     @pytest.mark.asyncio
     async def test_invalid_id_rejected(self, ctx_elicit_accept_true):
@@ -267,7 +267,7 @@ class TestUpdateGroup:
     @patch(PATCH_CLIENT)
     async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
         client = AsyncMock()
-        client.update_group.return_value = (None, None, "Group not found")
+        client.replace_group.return_value = (None, None, "Group not found")
         mock_get_client.return_value = client
 
         result = await update_group(group_id=GROUP_ID, profile={}, ctx=ctx_elicit_accept_true)
@@ -507,9 +507,9 @@ class TestGroupLifecycle:
         user = MagicMock()
 
         client = AsyncMock()
-        client.create_group.return_value = (created_group, None, None)
+        client.add_group.return_value = (created_group, None, None)
         client.get_group.return_value = (created_group, None, None)
-        client.update_group.return_value = (updated_group, None, None)
+        client.replace_group.return_value = (updated_group, None, None)
         client.add_user_to_group.return_value = (None, None)
         client.remove_user_from_group.return_value = (None, None)
         mock_get_client.return_value = client

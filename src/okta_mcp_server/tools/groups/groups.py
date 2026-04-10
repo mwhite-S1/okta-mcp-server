@@ -30,22 +30,41 @@ async def list_groups(
     limit: Optional[int] = None,
 ) -> dict:
     """List all the groups from the Okta organization with pagination support.
-    If search, filter, or q is specified, it will list only those groups that satisfy the condition.
+
+    PARAMETER SELECTION GUIDE — pick one, do not combine:
+        search (PREFERRED): SCIM 2.0 filter expression. Use this for exact name lookups or
+            any query involving special characters (dots, hyphens, slashes). Reliable and
+            indexable. Supports eq, sw (starts-with), co (contains), pr (present), and,
+            or, not.
+              exact match:   search='profile.name eq "Okta.FTE"'
+              starts-with:   search='profile.name sw "Engineering"'
+              type filter:   search='type eq "OKTA_GROUP"'
+              combined:      search='type eq "OKTA_GROUP" and profile.name sw "Eng"'
+
+        filter: Older Okta filter expression. Prefer search instead; filter supports a
+            narrower set of attributes and is not recommended for new queries.
+              example: filter='type eq "OKTA_GROUP"'
+
+        q: Simple prefix text search on the group name. Unreliable for names containing
+            special characters (periods, hyphens, slashes) — use search instead. Only
+            useful for casual browsing when an inexact match is acceptable.
+              example: q="Engineering"   # matches any group whose name starts with "Engineering"
 
     Parameters:
-        search (str, optional): The value of the search string when searching for some specific set of groups.
-        filter (str, optional): A filter string to filter groups by Okta profile attributes.
-        q (str, optional): A query string to search groups by Okta profile attributes.
+        search (str, optional): SCIM 2.0 filter expression (preferred for exact/reliable lookups).
+        filter (str, optional): Okta filter expression (legacy; prefer search).
+        q (str, optional): Prefix text search on group name (avoid for special-character names).
         fetch_all (bool, optional): If True, automatically fetch all pages of results. Default: False.
         after (str, optional): Pagination cursor for fetching results after this point.
         limit (int, optional): Maximum number of groups to return per page (min 20, max 100).
-        The search, filter, and q are performed on group profile attributes.
 
     Examples:
-        For pagination:
-        - First call: list_groups(search="profile.name sw \"Engineering\"")
-        - Next page: list_groups(search="profile.name sw \"Engineering\"", after="cursor_value")
-        - All pages: list_groups(search="profile.name sw \"Engineering\"", fetch_all=True)
+        Look up a specific group by exact name:
+            list_groups(search='profile.name eq "Okta.FTE"')
+        Find all OKTA_GROUP type groups whose name starts with "Sales":
+            list_groups(search='type eq "OKTA_GROUP" and profile.name sw "Sales"')
+        Paginate through all groups:
+            list_groups(fetch_all=True)
 
     Returns:
         Dict containing:
@@ -167,15 +186,14 @@ async def create_group(profile: dict, ctx: Context = None) -> list:
         # Wrap the profile in a dict with 'profile' key as required by Okta SDK
         logger.debug("Calling Okta API to create group")
 
-        group, _, err = await client.create_group({"profile": profile})
+        group, _, err = await client.add_group({"profile": profile})
 
         if err:
             logger.error(f"Okta API error while creating group: {err}")
             return {"error": f"Error: {err}"}
 
-        logger.info(
-            f"Successfully created group: {group.id} ({group.profile.name if hasattr(group, 'profile') else 'N/A'})"
-        )
+        group_name = getattr(getattr(group, 'profile', None), 'name', None) or getattr(group, 'name', 'N/A')
+        logger.info(f"Successfully created group: {group.id} ({group_name})")
         return [group]
     except Exception as e:
         logger.error(f"Exception while creating group: {type(e).__name__}: {e}")
@@ -230,7 +248,7 @@ async def delete_group(group_id: str, ctx: Context = None) -> list:
         client = await get_okta_client(manager)
         logger.debug(f"Calling Okta API to delete group {group_id}")
 
-        _, err = await client.delete_group(group_id)
+        _, _, err = await client.delete_group(group_id)
 
         if err:
             logger.error(f"Okta API error while deleting group {group_id}: {err}")
@@ -275,7 +293,7 @@ async def confirm_delete_group(group_id: str, confirmation: str, ctx: Context = 
         client = await get_okta_client(manager)
         logger.debug(f"Calling Okta API to delete group {group_id}")
 
-        _, err = await client.delete_group(group_id)
+        _, _, err = await client.delete_group(group_id)
 
         if err:
             logger.error(f"Okta API error while deleting group {group_id}: {err}")
@@ -312,7 +330,7 @@ async def update_group(group_id: str, profile: dict, ctx: Context = None) -> lis
         # Wrap the profile in a dict with 'profile' key as required by Okta SDK
         logger.debug(f"Calling Okta API to update group {group_id}")
 
-        group, _, err = await client.update_group(group_id, {"profile": profile})
+        group, _, err = await client.replace_group(group_id, {"profile": profile})
 
         if err:
             logger.error(f"Okta API error while updating group {group_id}: {err}")
@@ -362,14 +380,15 @@ async def list_group_users(
     logger.info(f"Listing users in group: {group_id}")
     logger.debug(f"fetch_all: {fetch_all}, after: '{after}', limit: {limit}")
 
-    # Validate limit parameter range
-    if limit is not None:
-        if limit < 20:
-            logger.warning(f"Limit {limit} is below minimum (20), setting to 20")
-            limit = 20
-        elif limit > 100:
-            logger.warning(f"Limit {limit} exceeds maximum (100), setting to 100")
-            limit = 100
+    # Validate limit parameter range; SDK requires at least one query param so default to 200
+    if limit is None:
+        limit = 200
+    elif limit < 20:
+        logger.warning(f"Limit {limit} is below minimum (20), setting to 20")
+        limit = 20
+    elif limit > 200:
+        logger.warning(f"Limit {limit} exceeds maximum (200), setting to 200")
+        limit = 200
 
     manager = ctx.request_context.lifespan_context.okta_auth_manager
 
@@ -378,7 +397,7 @@ async def list_group_users(
         logger.debug(f"Calling Okta API to list users in group {group_id}")
 
         query_params = build_query_params(after=after, limit=limit)
-        users, response, err = await client.list_group_users(group_id, query_params)
+        users, response, err = await client.list_group_users(group_id, **query_params)
 
         if err:
             logger.error(f"Okta API error while listing group users for {group_id}: {err}")

@@ -83,8 +83,8 @@ class TestListDevices:
 
         result = await list_devices(ctx=ctx_elicit_accept_true)
 
-        assert len(result) == 1
-        assert result[0]["id"] == DEVICE_ID
+        assert len(result["items"]) == 1
+        assert result["items"][0]["id"] == DEVICE_ID
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
@@ -94,7 +94,7 @@ class TestListDevices:
 
         result = await list_devices(ctx=ctx_elicit_accept_true)
 
-        assert result == []
+        assert result["items"] == []
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
@@ -104,7 +104,7 @@ class TestListDevices:
 
         result = await list_devices(ctx=ctx_elicit_accept_true)
 
-        assert "error" in result[0]
+        assert "error" in result
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
@@ -113,7 +113,7 @@ class TestListDevices:
 
         result = await list_devices(ctx=ctx_elicit_accept_true)
 
-        assert "error" in result[0]
+        assert "error" in result
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
@@ -158,7 +158,7 @@ class TestListDevices:
 
         result = await list_devices(ctx=ctx_elicit_accept_true)
 
-        assert len(result) == 3
+        assert len(result["items"]) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -399,8 +399,8 @@ class TestDeviceReadLifecycle:
 
         # Step 1: list
         list_result = await list_devices(ctx=ctx_elicit_accept_true)
-        assert len(list_result) == 1
-        assert list_result[0]["id"] == DEVICE_ID
+        assert len(list_result["items"]) == 1
+        assert list_result["items"][0]["id"] == DEVICE_ID
 
         # Step 2: get
         get_result = await get_device(ctx=ctx_elicit_accept_true, device_id=DEVICE_ID)

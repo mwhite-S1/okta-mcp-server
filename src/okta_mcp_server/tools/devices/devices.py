@@ -5,8 +5,9 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and limitations under the License.
 
+import re
 from typing import Optional
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from loguru import logger
 from mcp.server.fastmcp import Context
@@ -22,20 +23,47 @@ async def _execute(client, method: str, path: str, body: dict = None):
     """Make a direct API call via the SDK's request executor.
 
     Returns:
-        (body, error) where body is the parsed JSON response (dict or list),
-        or None on error.
+        (response, body, error) where response is the raw HTTP response object
+        (useful for headers like Link), body is the parsed JSON response
+        (dict or list), and error is any error encountered.
     """
+    import json as _json
+
     request_executor = client.get_request_executor()
     url = f"{client.get_base_url()}{path}"
 
     request, error = await request_executor.create_request(method, url, body or {})
     if error:
-        return None, error
+        return None, None, error
 
     response, response_body, error = await request_executor.execute(request)
     if error:
-        return None, error
-    return response_body if response_body else None, None
+        return None, None, error
+    if not response_body:
+        return response, None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response, response_body, None
+
+
+def _parse_next_cursor(response) -> Optional[str]:
+    """Extract the 'after' cursor from the Link: <URL>; rel="next" response header."""
+    if response is None:
+        return None
+    try:
+        link = response.headers.get("link") or response.headers.get("Link") or ""
+        match = re.search(r'<([^>]+)>;\s*rel="next"', link)
+        if not match:
+            return None
+        next_url = match.group(1)
+        params = parse_qs(urlparse(next_url).query)
+        values = params.get("after", [])
+        return values[0] if values else None
+    except Exception:
+        return None
 
 
 @mcp.tool()
@@ -45,20 +73,24 @@ async def list_devices(
     after: Optional[str] = None,
     limit: Optional[int] = None,
     expand: Optional[str] = None,
-) -> list:
+) -> dict:
     """List devices in the Okta organization.
 
     Parameters:
         search (str, optional): SCIM filter expression for device attributes,
             e.g. 'status eq "ACTIVE"' or 'profile.displayName co "Mac"'.
             Searchable properties: id, status, lastUpdated, and all profile attributes.
-        after (str, optional): Pagination cursor for the next page of results
-        limit (int, optional): Number of results per page (max 200, default 200)
+        after (str, optional): Pagination cursor for the next page of results.
+        limit (int, optional): Number of results per page (max 200, default 200).
         expand (str, optional): Embed associated user details in the response.
             Use 'user' for full user details or 'userSummary' for summaries.
 
     Returns:
-        List of device objects.
+        Dict containing:
+        - items: List of device objects
+        - total_fetched: Number of devices returned
+        - has_more: Boolean indicating if more results are available
+        - next_cursor: Cursor value to pass as 'after' for the next page
     """
     logger.info("Listing devices from Okta organization")
 
@@ -85,22 +117,26 @@ async def list_devices(
         if query_params:
             path += f"?{urlencode(query_params)}"
 
-        body, error = await _execute(client, "GET", path)
+        response, body, error = await _execute(client, "GET", path)
 
         if error:
             logger.error(f"Okta API error while listing devices: {error}")
-            return [{"error": str(error)}]
+            return {"error": str(error)}
 
-        if not body:
-            logger.info("No devices found")
-            return []
+        items = body if isinstance(body, list) else ([] if not body else [body])
+        next_cursor = _parse_next_cursor(response)
 
-        logger.info(f"Successfully retrieved {len(body)} devices")
-        return body
+        logger.info(f"Successfully retrieved {len(items)} devices (has_more={next_cursor is not None})")
+        return {
+            "items": items,
+            "total_fetched": len(items),
+            "has_more": next_cursor is not None,
+            "next_cursor": next_cursor,
+        }
 
     except Exception as e:
         logger.error(f"Exception while listing devices: {type(e).__name__}: {e}")
-        return [{"error": str(e)}]
+        return {"error": str(e)}
 
 
 @mcp.tool()
@@ -120,7 +156,7 @@ async def get_device(ctx: Context, device_id: str) -> dict:
 
     try:
         client = await get_okta_client(manager)
-        body, error = await _execute(client, "GET", f"/api/v1/devices/{device_id}")
+        _, body, error = await _execute(client, "GET", f"/api/v1/devices/{device_id}")
 
         if error:
             logger.error(f"Okta API error while getting device {device_id}: {error}")
@@ -151,7 +187,7 @@ async def list_device_users(ctx: Context, device_id: str) -> list:
 
     try:
         client = await get_okta_client(manager)
-        body, error = await _execute(client, "GET", f"/api/v1/devices/{device_id}/users")
+        _, body, error = await _execute(client, "GET", f"/api/v1/devices/{device_id}/users")
 
         if error:
             logger.error(f"Okta API error while listing device users for {device_id}: {error}")
@@ -188,7 +224,7 @@ async def activate_device(ctx: Context, device_id: str) -> dict:
 
     try:
         client = await get_okta_client(manager)
-        _, error = await _execute(client, "POST", f"/api/v1/devices/{device_id}/lifecycle/activate")
+        _, _, error = await _execute(client, "POST", f"/api/v1/devices/{device_id}/lifecycle/activate")
 
         if error:
             logger.error(f"Okta API error while activating device {device_id}: {error}")
@@ -233,7 +269,7 @@ async def deactivate_device(ctx: Context, device_id: str) -> dict:
 
     try:
         client = await get_okta_client(manager)
-        _, error = await _execute(client, "POST", f"/api/v1/devices/{device_id}/lifecycle/deactivate")
+        _, _, error = await _execute(client, "POST", f"/api/v1/devices/{device_id}/lifecycle/deactivate")
 
         if error:
             logger.error(f"Okta API error while deactivating device {device_id}: {error}")
@@ -278,7 +314,7 @@ async def suspend_device(ctx: Context, device_id: str) -> dict:
 
     try:
         client = await get_okta_client(manager)
-        _, error = await _execute(client, "POST", f"/api/v1/devices/{device_id}/lifecycle/suspend")
+        _, _, error = await _execute(client, "POST", f"/api/v1/devices/{device_id}/lifecycle/suspend")
 
         if error:
             logger.error(f"Okta API error while suspending device {device_id}: {error}")
@@ -311,7 +347,7 @@ async def unsuspend_device(ctx: Context, device_id: str) -> dict:
 
     try:
         client = await get_okta_client(manager)
-        _, error = await _execute(client, "POST", f"/api/v1/devices/{device_id}/lifecycle/unsuspend")
+        _, _, error = await _execute(client, "POST", f"/api/v1/devices/{device_id}/lifecycle/unsuspend")
 
         if error:
             logger.error(f"Okta API error while unsuspending device {device_id}: {error}")
@@ -367,7 +403,7 @@ async def delete_device(ctx: Context, device_id: str) -> dict:
 
     try:
         client = await get_okta_client(manager)
-        _, error = await _execute(client, "DELETE", f"/api/v1/devices/{device_id}")
+        _, _, error = await _execute(client, "DELETE", f"/api/v1/devices/{device_id}")
 
         if error:
             logger.error(f"Okta API error while deleting device {device_id}: {error}")

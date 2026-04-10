@@ -33,12 +33,34 @@ ZONE_BODY = {
     "gateways": [{"type": "CIDR", "value": "1.2.3.4/24"}],
 }
 
+ZONE_DICT = {"id": ZONE_ID, "name": "Test Zone", "type": "IP", "status": "ACTIVE"}
+
 
 def _make_zone(zone_id=ZONE_ID, name="Test Zone"):
     z = MagicMock()
     z.id = zone_id
     z.to_dict.return_value = {"id": zone_id, "name": name, "type": "IP", "status": "ACTIVE"}
     return z
+
+
+def _make_nz_executor(body=None, execute_error=None):
+    """Create a mock request executor for network zone API calls that use _execute."""
+    executor = AsyncMock()
+    executor.create_request.return_value = (MagicMock(), None)
+    if execute_error:
+        executor.execute.return_value = (None, None, execute_error)
+    else:
+        executor.execute.return_value = (MagicMock(), body, None)
+    return executor
+
+
+def _make_nz_client(body=None, execute_error=None):
+    """Create a mock Okta client wired to the request executor."""
+    executor = _make_nz_executor(body=body, execute_error=execute_error)
+    client = MagicMock()
+    client.get_request_executor.return_value = executor
+    client.get_base_url.return_value = "https://test.okta.com"
+    return client
 
 
 # ---------------------------------------------------------------------------
@@ -49,9 +71,7 @@ class TestListNetworkZones:
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
     async def test_returns_zones(self, mock_get_client, ctx_elicit_accept_true):
-        zone = _make_zone()
-        client = AsyncMock()
-        client.list_network_zones.return_value = ([zone], None, None)
+        client = _make_nz_client(body=[ZONE_DICT])
         mock_get_client.return_value = client
 
         result = await list_network_zones(ctx=ctx_elicit_accept_true)
@@ -62,8 +82,7 @@ class TestListNetworkZones:
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
     async def test_empty(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.list_network_zones.return_value = ([], None, None)
+        client = _make_nz_client(body=None)
         mock_get_client.return_value = client
 
         result = await list_network_zones(ctx=ctx_elicit_accept_true)
@@ -72,8 +91,7 @@ class TestListNetworkZones:
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
     async def test_error(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.list_network_zones.return_value = (None, None, Exception("err"))
+        client = _make_nz_client(execute_error=Exception("err"))
         mock_get_client.return_value = client
 
         result = await list_network_zones(ctx=ctx_elicit_accept_true)
@@ -82,9 +100,7 @@ class TestListNetworkZones:
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
     async def test_exception(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.list_network_zones.side_effect = RuntimeError("boom")
-        mock_get_client.return_value = client
+        mock_get_client.side_effect = RuntimeError("boom")
 
         result = await list_network_zones(ctx=ctx_elicit_accept_true)
         assert "error" in result
@@ -98,21 +114,17 @@ class TestCreateNetworkZone:
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
     async def test_success(self, mock_get_client, ctx_elicit_accept_true):
-        zone = _make_zone()
-        client = AsyncMock()
-        client.create_network_zone.return_value = (zone, None, None)
+        client = _make_nz_client(body=ZONE_DICT)
         mock_get_client.return_value = client
 
         result = await create_network_zone(ctx=ctx_elicit_accept_true, zone=ZONE_BODY)
 
-        client.create_network_zone.assert_called_once_with(ZONE_BODY)
         assert result["id"] == ZONE_ID
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
     async def test_error(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.create_network_zone.return_value = (None, None, Exception("err"))
+        client = _make_nz_client(execute_error=Exception("err"))
         mock_get_client.return_value = client
 
         result = await create_network_zone(ctx=ctx_elicit_accept_true, zone=ZONE_BODY)
@@ -121,9 +133,7 @@ class TestCreateNetworkZone:
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
     async def test_exception(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.create_network_zone.side_effect = RuntimeError("boom")
-        mock_get_client.return_value = client
+        mock_get_client.side_effect = RuntimeError("boom")
 
         result = await create_network_zone(ctx=ctx_elicit_accept_true, zone=ZONE_BODY)
         assert "error" in result
@@ -175,21 +185,17 @@ class TestReplaceNetworkZone:
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
     async def test_success(self, mock_get_client, ctx_elicit_accept_true):
-        zone = _make_zone()
-        client = AsyncMock()
-        client.replace_network_zone.return_value = (zone, None, None)
+        client = _make_nz_client(body=ZONE_DICT)
         mock_get_client.return_value = client
 
         result = await replace_network_zone(ctx=ctx_elicit_accept_true, zone_id=ZONE_ID, zone=ZONE_BODY)
 
-        client.replace_network_zone.assert_called_once_with(ZONE_ID, ZONE_BODY)
         assert result["id"] == ZONE_ID
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
     async def test_error(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.replace_network_zone.return_value = (None, None, Exception("err"))
+        client = _make_nz_client(execute_error=Exception("err"))
         mock_get_client.return_value = client
 
         result = await replace_network_zone(ctx=ctx_elicit_accept_true, zone_id=ZONE_ID, zone=ZONE_BODY)
@@ -198,9 +204,7 @@ class TestReplaceNetworkZone:
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
     async def test_exception(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.replace_network_zone.side_effect = RuntimeError("boom")
-        mock_get_client.return_value = client
+        mock_get_client.side_effect = RuntimeError("boom")
 
         result = await replace_network_zone(ctx=ctx_elicit_accept_true, zone_id=ZONE_ID, zone=ZONE_BODY)
         assert "error" in result

@@ -5,7 +5,10 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and limitations under the License.
 
+import json as _json
+import re
 from typing import Any, Dict, Optional
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from loguru import logger
 from mcp.server.fastmcp import Context
@@ -18,6 +21,46 @@ from okta_mcp_server.utils.serialize import to_dict
 from okta_mcp_server.utils.validation import validate_ids
 
 
+async def _execute(client, method: str, path: str, body: dict = None):
+    """Make a direct API call bypassing SDK Pydantic deserialization.
+
+    Returns (response, body, error). response carries HTTP headers (e.g. Link
+    for pagination cursors); body is the parsed JSON dict or list.
+    """
+    request_executor = client.get_request_executor()
+    url = f"{client.get_base_url()}{path}"
+    request, error = await request_executor.create_request(method, url, body or {})
+    if error:
+        return None, None, error
+    response, response_body, error = await request_executor.execute(request)
+    if error:
+        return None, None, error
+    if not response_body:
+        return response, None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response, response_body, None
+
+
+def _parse_next_cursor(response) -> Optional[str]:
+    """Extract the 'after' cursor from the Link: <URL>; rel="next" response header."""
+    if response is None:
+        return None
+    try:
+        link = response.headers.get("link") or response.headers.get("Link") or ""
+        match = re.search(r'<([^>]+)>;\s*rel="next"', link)
+        if not match:
+            return None
+        params = parse_qs(urlparse(match.group(1)).query)
+        values = params.get("after", [])
+        return values[0] if values else None
+    except Exception:
+        return None
+
+
 @mcp.tool()
 async def list_applications(
     ctx: Context,
@@ -27,20 +70,43 @@ async def list_applications(
     filter: Optional[str] = None,
     expand: Optional[str] = None,
     include_non_deleted: Optional[bool] = None,
-) -> list:
+) -> dict:
     """List all applications from the Okta organization.
 
+    PARAMETER SELECTION GUIDE — pick one search parameter, do not combine:
+        filter (PREFERRED for status/id queries): Okta filter expression. Use for exact
+            status filtering or lookups by user/group assignment. Reliable and indexed.
+              by status:     filter='status eq "ACTIVE"'
+              by user:       filter='user.id eq "00u1234abcd"'
+              by group:      filter='group.id eq "00g1234abcd"'
+
+        q: Prefix text search on the application label. Unreliable for labels containing
+            special characters (dots, hyphens, slashes). Only use for casual browsing
+            when an inexact match is acceptable.
+              example: q="Salesforce"
+
     Parameters:
-        q (str, optional): Searches for applications by label, property, or link
-        after (str, optional): Specifies the pagination cursor for the next page of results
-        limit (int, optional): Specifies the number of results per page (min 20, max 100)
-        filter (str, optional): Filters applications by status, user.id, group.id, or credentials.signing.kid
-        expand (str, optional): Expands the app user object to include the user's profile or expand the app group
-        object to include the group's profile
-        include_non_deleted (bool, optional): Include non-deleted applications in the results
+        q (str, optional): Prefix text search on app label (avoid for special-character names).
+        filter (str, optional): Okta filter expression for status, user.id, or group.id (preferred).
+        after (str, optional): Pagination cursor for the next page of results.
+        limit (int, optional): Results per page (min 20, max 100).
+        expand (str, optional): Embed related resources inline (e.g. "user/groups").
+        include_non_deleted (bool, optional): Include non-deleted applications in results.
+
+    Examples:
+        List all active applications:
+            list_applications(filter='status eq "ACTIVE"')
+        Find apps assigned to a specific group:
+            list_applications(filter='group.id eq "00g1234abcd"')
+        Browse apps by name prefix:
+            list_applications(q="Okta")
 
     Returns:
-        List containing the applications from the Okta organization.
+        Dict containing:
+        - items: List of application objects
+        - total_fetched: Number of applications returned
+        - has_more: Boolean indicating if more results are available
+        - next_cursor: Cursor value to pass as 'after' for the next page
     """
     logger.info("Listing applications from Okta organization")
     logger.debug(f"Query parameters: q='{q}', filter='{filter}', limit={limit}")
@@ -58,37 +124,44 @@ async def list_applications(
 
     try:
         client = await get_okta_client(manager)
-        query_params = {}
-
+        params: Dict[str, Any] = {}
         if q:
-            query_params["q"] = q
+            params["q"] = q
         if after:
-            query_params["after"] = after
+            params["after"] = after
         if limit:
-            query_params["limit"] = limit
+            params["limit"] = limit
         if filter:
-            query_params["filter"] = filter
+            params["filter"] = filter
         if expand:
-            query_params["expand"] = expand
+            params["expand"] = expand
         if include_non_deleted is not None:
-            query_params["includeNonDeleted"] = include_non_deleted
+            params["includeNonDeleted"] = str(include_non_deleted).lower()
 
-        logger.debug("Calling Okta API to list applications")
-        apps, _, err = await client.list_applications(**query_params)
+        path = f"/api/v1/apps?{urlencode(params)}" if params else "/api/v1/apps"
+        logger.debug(f"Calling Okta API to list applications: {path}")
+        response, apps, err = await _execute(client, "GET", path)
 
         if err:
             logger.error(f"Okta API error while listing applications: {err}")
-            return [f"Error: {err}"]
+            return {"error": str(err)}
 
         if not apps:
             logger.info("No applications found")
-            return []
+            return {"items": [], "total_fetched": 0, "has_more": False, "next_cursor": None}
 
-        logger.info(f"Successfully retrieved {len(apps)} applications")
-        return [to_dict(app) for app in apps]
+        items = apps if isinstance(apps, list) else [apps]
+        next_cursor = _parse_next_cursor(response)
+        logger.info(f"Successfully retrieved {len(items)} applications (has_more={next_cursor is not None})")
+        return {
+            "items": items,
+            "total_fetched": len(items),
+            "has_more": next_cursor is not None,
+            "next_cursor": next_cursor,
+        }
     except Exception as e:
         logger.error(f"Exception while listing applications: {type(e).__name__}: {e}")
-        return [f"Exception: {e}"]
+        return {"error": str(e)}
 
 
 @mcp.tool()
@@ -110,19 +183,21 @@ async def get_application(ctx: Context, app_id: str, expand: Optional[str] = Non
 
     try:
         client = await get_okta_client(manager)
-
-        query_params = {}
+        params: Dict[str, Any] = {}
         if expand:
-            query_params["expand"] = expand
-
-        app, _, err = await client.get_application(app_id, **query_params)
+            params["expand"] = expand
+        path = f"/api/v1/apps/{app_id}?{urlencode(params)}" if params else f"/api/v1/apps/{app_id}"
+        _, app, err = await _execute(client, "GET", path)
 
         if err:
             logger.error(f"Okta API error while getting application {app_id}: {err}")
             return {"error": str(err)}
 
+        if not app:
+            return None
+
         logger.info(f"Successfully retrieved application: {app_id}")
-        return to_dict(app)
+        return [app] if isinstance(app, dict) else [to_dict(app)]
     except Exception as e:
         logger.error(f"Exception while getting application {app_id}: {type(e).__name__}: {e}")
         return {"error": str(e)}

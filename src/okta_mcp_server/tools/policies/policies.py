@@ -5,7 +5,9 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and limitations under the License.
 
+import re
 from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from loguru import logger
 from mcp.server.fastmcp import Context
@@ -21,6 +23,48 @@ from okta_mcp_server.utils.messages import (
 )
 from okta_mcp_server.utils.serialize import to_dict
 from okta_mcp_server.utils.validation import validate_ids
+
+
+async def _execute(client, method: str, path: str, body: dict = None):
+    """Make a direct API call via the SDK's request executor, returning raw JSON.
+
+    Returns (response, body, error). response carries HTTP headers (e.g. Link
+    for pagination cursors); body is the parsed JSON dict or list.
+    """
+    import json as _json
+
+    request_executor = client.get_request_executor()
+    url = f"{client.get_base_url()}{path}"
+    request, error = await request_executor.create_request(method, url, body or {})
+    if error:
+        return None, None, error
+    response, response_body, error = await request_executor.execute(request)
+    if error:
+        return None, None, error
+    if not response_body:
+        return response, None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response, response_body, None
+
+
+def _parse_next_cursor(response) -> Optional[str]:
+    """Extract the 'after' cursor from the Link: <URL>; rel="next" response header."""
+    if response is None:
+        return None
+    try:
+        link = response.headers.get("link") or response.headers.get("Link") or ""
+        match = re.search(r'<([^>]+)>;\s*rel="next"', link)
+        if not match:
+            return None
+        params = parse_qs(urlparse(match.group(1)).query)
+        values = params.get("after", [])
+        return values[0] if values else None
+    except Exception:
+        return None
 
 
 @mcp.tool()
@@ -64,7 +108,7 @@ async def list_policies(
 
     try:
         okta_client = await get_okta_client(manager)
-        params = {"type": type, "limit": limit}
+        params: Dict[str, Any] = {"type": type, "limit": limit if limit is not None else 20}
         if status:
             params["status"] = status
         if q:
@@ -72,8 +116,9 @@ async def list_policies(
         if after:
             params["after"] = after
 
-        logger.debug("Calling Okta API to list policies")
-        policies, _, err = await okta_client.list_policies(**params)
+        path = f"/api/v1/policies?{urlencode(params)}"
+        logger.debug(f"Calling Okta API to list policies: {path}")
+        response, policies, err = await _execute(okta_client, "GET", path)
 
         if err:
             logger.error(f"Error listing policies: {err}")
@@ -81,11 +126,16 @@ async def list_policies(
 
         if not policies:
             logger.info("No policies found")
-            return {"policies": []}
+            return {"items": [], "total_fetched": 0, "has_more": False, "next_cursor": None}
 
-        logger.info(f"Successfully retrieved {len(policies)} policies")
+        items = policies if isinstance(policies, list) else [policies]
+        next_cursor = _parse_next_cursor(response)
+        logger.info(f"Successfully retrieved {len(items)} policies (has_more={next_cursor is not None})")
         return {
-            "policies": [to_dict(policy) for policy in policies],
+            "items": items,
+            "total_fetched": len(items),
+            "has_more": next_cursor is not None,
+            "next_cursor": next_cursor,
         }
 
     except Exception as e:
@@ -108,13 +158,14 @@ async def get_policy(ctx: Context, policy_id: str) -> Optional[Dict[str, Any]]:
     okta_client = await get_okta_client(manager)
 
     try:
-        policy, _, err = await okta_client.get_policy(policy_id)
+        path = f"/api/v1/policies/{policy_id}"
+        _, policy, err = await _execute(okta_client, "GET", path)
 
         if err:
             logger.error(f"Error getting policy {policy_id}: {err}")
             return {"error": str(err)}
 
-        return to_dict(policy) if policy else None
+        return policy if policy else None
 
     except Exception as e:
         logger.error(f"Exception getting policy: {e}")
@@ -215,7 +266,7 @@ async def delete_policy(ctx: Context, policy_id: str) -> Dict[str, Any]:
 
     try:
         okta_client = await get_okta_client(manager)
-        _, err = await okta_client.delete_policy(policy_id)
+        _, _, err = await okta_client.delete_policy(policy_id)
 
         if err:
             logger.error(f"Error deleting policy {policy_id}: {err}")
@@ -318,7 +369,8 @@ async def list_policy_rules(ctx: Context, policy_id: str) -> Dict[str, Any]:
     okta_client = await get_okta_client(manager)
 
     try:
-        rules, resp, err = await okta_client.list_policy_rules(policy_id)
+        path = f"/api/v1/policies/{policy_id}/rules"
+        _, rules, err = await _execute(okta_client, "GET", path)
 
         if err:
             logger.error(f"Error listing policy rules: {err}")
@@ -328,11 +380,8 @@ async def list_policy_rules(ctx: Context, policy_id: str) -> Dict[str, Any]:
             logger.info("No policy rules found")
             return {"rules": []}
 
-        return {
-            "rules": [to_dict(rule) for rule in rules],
-            "has_next": resp.has_next() if resp else False,
-            "next_page_token": resp.get_next_page_token() if resp and resp.has_next() else None,
-        }
+        items = rules if isinstance(rules, list) else [rules]
+        return {"rules": items}
 
     except Exception as e:
         logger.error(f"Exception listing policy rules: {e}")
@@ -355,13 +404,14 @@ async def get_policy_rule(ctx: Context, policy_id: str, rule_id: str) -> Optiona
     okta_client = await get_okta_client(manager)
 
     try:
-        rule, _, err = await okta_client.get_policy_rule(policy_id, rule_id)
+        path = f"/api/v1/policies/{policy_id}/rules/{rule_id}"
+        _, rule, err = await _execute(okta_client, "GET", path)
 
         if err:
             logger.error(f"Error getting policy rule: {err}")
             return {"error": str(err)}
 
-        return to_dict(rule) if rule else None
+        return rule if rule else None
 
     except Exception as e:
         logger.error(f"Exception getting policy rule: {e}")

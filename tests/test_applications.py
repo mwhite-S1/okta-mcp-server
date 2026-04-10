@@ -24,6 +24,7 @@ from okta_mcp_server.tools.applications.applications import (
 
 APP_ID = "0oa1234567890ABCDEF"
 PATCH_CLIENT = "okta_mcp_server.tools.applications.applications.get_okta_client"
+PATCH_EXECUTE = "okta_mcp_server.tools.applications.applications._execute"
 
 APP_DICT = {"id": APP_ID, "label": "Test App", "status": "ACTIVE", "signOnMode": "SAML_2_0"}
 
@@ -37,6 +38,13 @@ def _make_app(app_id=APP_ID, label="Test App", status="ACTIVE"):
     return app
 
 
+def _make_response(link_header=None):
+    """Build a mock HTTP response; headers.get returns the link header or ''."""
+    response = MagicMock()
+    response.headers.get = MagicMock(return_value=link_header or "")
+    return response
+
+
 # ---------------------------------------------------------------------------
 # list_applications
 # ---------------------------------------------------------------------------
@@ -44,38 +52,41 @@ def _make_app(app_id=APP_ID, label="Test App", status="ACTIVE"):
 class TestListApplications:
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_returns_apps(self, mock_get_client, ctx_elicit_accept_true):
-        app = _make_app()
-        client = AsyncMock()
-        client.list_applications.return_value = ([app], None, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_returns_apps(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), [APP_DICT], None)
 
         result = await list_applications(ctx=ctx_elicit_accept_true)
 
-        assert len(result) == 1
-        assert result[0]["id"] == APP_ID
+        assert isinstance(result, dict)
+        assert len(result["items"]) == 1
+        assert result["items"][0]["id"] == APP_ID
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_empty_result(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.list_applications.return_value = ([], None, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_empty_result(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), None, None)
 
         result = await list_applications(ctx=ctx_elicit_accept_true)
 
-        assert result == []
+        assert isinstance(result, dict)
+        assert result["items"] == []
+        assert result["total_fetched"] == 0
+        assert result["has_more"] is False
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.list_applications.return_value = (None, None, "API Error")
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_api_error(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (None, None, "API Error")
 
         result = await list_applications(ctx=ctx_elicit_accept_true)
 
-        assert "Error" in result[0]
+        assert "error" in result
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
@@ -84,52 +95,88 @@ class TestListApplications:
 
         result = await list_applications(ctx=ctx_elicit_accept_true)
 
-        assert "Exception" in result[0]
+        assert "error" in result
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_limit_clamped_below_minimum(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.list_applications.return_value = ([], None, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_limit_clamped_below_minimum(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), None, None)
 
         await list_applications(ctx=ctx_elicit_accept_true, limit=5)
-        call_params = client.list_applications.call_args.kwargs
-        assert call_params.get("limit") == 20
+
+        # Path should contain limit=20 (clamped from 5)
+        call_args = mock_execute.call_args
+        path_arg = call_args[0][2]  # positional: (client, method, path)
+        assert "limit=20" in path_arg, f"Expected limit=20 in path, got: {path_arg}"
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_limit_clamped_above_maximum(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.list_applications.return_value = ([], None, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_limit_clamped_above_maximum(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), None, None)
 
         await list_applications(ctx=ctx_elicit_accept_true, limit=500)
-        call_params = client.list_applications.call_args.kwargs
-        assert call_params.get("limit") == 100
+
+        call_args = mock_execute.call_args
+        path_arg = call_args[0][2]
+        assert "limit=100" in path_arg, f"Expected limit=100 in path, got: {path_arg}"
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_query_param_forwarded(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.list_applications.return_value = ([], None, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_query_param_forwarded(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), None, None)
 
         await list_applications(ctx=ctx_elicit_accept_true, q="Salesforce")
-        call_params = client.list_applications.call_args.kwargs
-        assert call_params.get("q") == "Salesforce"
+
+        call_args = mock_execute.call_args
+        path_arg = call_args[0][2]
+        assert "q=Salesforce" in path_arg, f"Expected q=Salesforce in path, got: {path_arg}"
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_multiple_apps_returned(self, mock_get_client, ctx_elicit_accept_true):
-        apps = [_make_app(app_id=f"0oa{i}", label=f"App {i}") for i in range(3)]
-        client = AsyncMock()
-        client.list_applications.return_value = (apps, None, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_multiple_apps_returned(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        apps = [{"id": f"0oa{i}", "label": f"App {i}", "status": "ACTIVE"} for i in range(3)]
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), apps, None)
 
         result = await list_applications(ctx=ctx_elicit_accept_true)
 
-        assert len(result) == 3
+        assert isinstance(result, dict)
+        assert len(result["items"]) == 3
+        assert result["total_fetched"] == 3
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_pagination_metadata_no_next(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        """When no Link header present, has_more is False and next_cursor is None."""
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), [APP_DICT], None)
+
+        result = await list_applications(ctx=ctx_elicit_accept_true)
+
+        assert result["has_more"] is False
+        assert result["next_cursor"] is None
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_pagination_metadata_with_next(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        """When Link header with rel=next is present, has_more is True with cursor."""
+        link = '<https://example.okta.com/api/v1/apps?after=abc123>; rel="next"'
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(link_header=link), [APP_DICT], None)
+
+        result = await list_applications(ctx=ctx_elicit_accept_true)
+
+        assert result["has_more"] is True
+        assert result["next_cursor"] == "abc123"
 
 
 # ---------------------------------------------------------------------------
@@ -139,16 +186,16 @@ class TestListApplications:
 class TestGetApplication:
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_returns_app(self, mock_get_client, ctx_elicit_accept_true):
-        app = _make_app()
-        client = AsyncMock()
-        client.get_application.return_value = (app, None, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_returns_app(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), APP_DICT, None)
 
         result = await get_application(ctx=ctx_elicit_accept_true, app_id=APP_ID)
 
-        assert result["id"] == APP_ID
-        client.get_application.assert_awaited_once_with(APP_ID)
+        assert result is not None
+        assert isinstance(result, list)
+        assert result[0]["id"] == APP_ID
 
     @pytest.mark.asyncio
     async def test_invalid_id_rejected(self, ctx_elicit_accept_true):
@@ -158,10 +205,10 @@ class TestGetApplication:
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
-        client = AsyncMock()
-        client.get_application.return_value = (None, None, "App not found")
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_api_error(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (None, None, "App not found")
 
         result = await get_application(ctx=ctx_elicit_accept_true, app_id=APP_ID)
 
@@ -178,15 +225,16 @@ class TestGetApplication:
 
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_expand_param_forwarded(self, mock_get_client, ctx_elicit_accept_true):
-        app = _make_app()
-        client = AsyncMock()
-        client.get_application.return_value = (app, None, None)
-        mock_get_client.return_value = client
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_expand_param_forwarded(self, mock_execute, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.return_value = AsyncMock()
+        mock_execute.return_value = (_make_response(), APP_DICT, None)
 
         await get_application(ctx=ctx_elicit_accept_true, app_id=APP_ID, expand="user/groups")
-        call_params = client.get_application.call_args.kwargs
-        assert call_params.get("expand") == "user/groups"
+
+        call_args = mock_execute.call_args
+        path_arg = call_args[0][2]
+        assert "expand=user" in path_arg, f"Expected expand in path, got: {path_arg}"
 
 
 # ---------------------------------------------------------------------------
@@ -344,17 +392,26 @@ class TestActivateApplication:
 class TestApplicationLifecycle:
     @pytest.mark.asyncio
     @patch(PATCH_CLIENT)
-    async def test_create_then_get_then_update_then_activate(self, mock_get_client, ctx_elicit_accept_true):
+    @patch(PATCH_EXECUTE, new_callable=AsyncMock)
+    async def test_create_then_get_then_update_then_activate(
+        self, mock_execute, mock_get_client, ctx_elicit_accept_true
+    ):
         created_app = _make_app(app_id="0oanew123", label="New App")
         updated_app = _make_app(app_id="0oanew123", label="Updated App")
         updated_app.as_dict.return_value = {"id": "0oanew123", "label": "Updated App", "status": "ACTIVE"}
 
         client = AsyncMock()
         client.create_application.return_value = (created_app, None, None)
-        client.get_application.return_value = (created_app, None, None)
         client.update_application.return_value = (updated_app, None, None)
         client.activate_application.return_value = (None, None)
         mock_get_client.return_value = client
+
+        # _execute used by get_application
+        mock_execute.return_value = (
+            _make_response(),
+            {"id": "0oanew123", "label": "New App", "status": "ACTIVE"},
+            None,
+        )
 
         # Step 1: create
         app_config = {"name": "template_swa", "label": "New App", "signOnMode": "AUTO_LOGIN"}
@@ -363,7 +420,7 @@ class TestApplicationLifecycle:
 
         # Step 2: get
         get_result = await get_application(ctx=ctx_elicit_accept_true, app_id="0oanew123")
-        assert get_result["id"] == "0oanew123"
+        assert get_result[0]["id"] == "0oanew123"
 
         # Step 3: update
         update_result = await update_application(
