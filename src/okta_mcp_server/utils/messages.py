@@ -23,6 +23,12 @@ DELETE_GROUP = (
     "This action cannot be undone."
 )
 
+DELETE_GROUP_RULE = (
+    "Are you sure you want to delete group rule {rule_id}? "
+    "This will permanently remove the rule and stop automatic group membership assignments. "
+    "This action cannot be undone."
+)
+
 # ---------------------------------------------------------------------------
 # Applications
 # ---------------------------------------------------------------------------
@@ -115,4 +121,51 @@ CANCEL_ACCESS_REQUEST = (
 DELETE_REQUEST_CONDITION = (
     "Are you sure you want to delete request condition {condition_id} "
     "from resource {resource_id}? This action cannot be undone."
+)
+
+DELETE_IAM_GOVERNANCE_BUNDLE = (
+    "Are you sure you want to delete IAM governance bundle {bundle_id}? "
+    "This will remove the bundle and all its entitlement assignments. This action cannot be undone."
+)
+
+OPT_OUT_IAM_GOVERNANCE = (
+    "Are you sure you want to opt out the Admin Console from entitlement management? "
+    "This will disable entitlement management for the entire organization. This action cannot be undone."
+)
+
+# ---------------------------------------------------------------------------
+# User credentials / sessions / factors
+# ---------------------------------------------------------------------------
+
+REVOKE_USER_SESSIONS = (
+    "Are you sure you want to revoke all active sessions for user {user_id}? "
+    "This will immediately sign the user out of all devices and browsers."
+)
+
+UNENROLL_FACTOR = (
+    "Are you sure you want to unenroll factor {factor_id} from user {user_id}? "
+    "The user will need to re-enroll this factor. This action cannot be undone."
+)
+
+REVOKE_TOKENS_FOR_CLIENT = (
+    "Are you sure you want to revoke all refresh tokens for client {client_id} "
+    "belonging to user {user_id}? All active sessions with this app will be terminated."
+)
+
+# ---------------------------------------------------------------------------
+# Network Zones
+# ---------------------------------------------------------------------------
+
+DELETE_NETWORK_ZONE = (
+    "Are you sure you want to delete network zone {zone_id}? "
+    "Any policies referencing this zone will be affected. This action cannot be undone."
+)
+
+# ---------------------------------------------------------------------------
+# Trusted Origins
+# ---------------------------------------------------------------------------
+
+DELETE_TRUSTED_ORIGIN = (
+    "Are you sure you want to delete trusted origin {origin_id}? "
+    "This may break CORS or iFrame embedding for the affected origin. This action cannot be undone."
 )

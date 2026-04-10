@@ -18,6 +18,7 @@ from okta_mcp_server.tools.users.users import (
     get_user,
     get_user_profile_attributes,
     list_users,
+    replace_user,
     update_user,
 )
 
@@ -313,3 +314,49 @@ class TestUserLifecycle:
         # Step 3: update
         update_result = await update_user(user_id="00unew123", profile={"firstName": "Updated"}, ctx=ctx_elicit_accept_true)
         assert update_result == [updated_user]
+
+
+# ---------------------------------------------------------------------------
+# replace_user
+# ---------------------------------------------------------------------------
+
+class TestReplaceUser:
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_replaces_user(self, mock_get_client, ctx_elicit_accept_true):
+        user = _make_user()
+        client = AsyncMock()
+        client.replace_user.return_value = (user, None, None)
+        mock_get_client.return_value = client
+
+        profile = {"firstName": "Full", "lastName": "Replace", "email": "test@example.com", "login": "test@example.com"}
+        result = await replace_user(user_id=USER_ID, profile=profile, ctx=ctx_elicit_accept_true)
+
+        assert result == [user]
+        client.replace_user.assert_awaited_once_with(USER_ID, {"profile": profile})
+
+    @pytest.mark.asyncio
+    async def test_invalid_id_rejected(self, ctx_elicit_accept_true):
+        result = await replace_user(user_id="bad/id", profile={}, ctx=ctx_elicit_accept_true)
+
+        assert "Error" in result[0]
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
+        client = AsyncMock()
+        client.replace_user.return_value = (None, None, "User not found")
+        mock_get_client.return_value = client
+
+        result = await replace_user(user_id=USER_ID, profile={}, ctx=ctx_elicit_accept_true)
+
+        assert "Error" in result[0]
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_exception(self, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.side_effect = Exception("Connection error")
+
+        result = await replace_user(user_id=USER_ID, profile={}, ctx=ctx_elicit_accept_true)
+
+        assert "Exception" in result[0]

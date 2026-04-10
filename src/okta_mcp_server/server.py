@@ -65,6 +65,13 @@ def main():
 
     logger.info("Starting Okta MCP Server")
     from okta_mcp_server.tools.applications import applications  # noqa: F401
+    from okta_mcp_server.tools.applications import application_users  # noqa: F401
+    from okta_mcp_server.tools.applications import application_groups  # noqa: F401
+    from okta_mcp_server.tools.applications import application_grants  # noqa: F401
+    from okta_mcp_server.tools.applications import application_tokens  # noqa: F401
+    from okta_mcp_server.tools.applications import application_connections  # noqa: F401
+    from okta_mcp_server.tools.applications import application_features  # noqa: F401
+    from okta_mcp_server.tools.applications import application_push  # noqa: F401
     from okta_mcp_server.tools.devices import devices  # noqa: F401
     from okta_mcp_server.tools.governance import access_requests  # noqa: F401
     from okta_mcp_server.tools.governance import certifications  # noqa: F401
@@ -77,9 +84,21 @@ def main():
     from okta_mcp_server.tools.governance import risk_rules  # noqa: F401
     from okta_mcp_server.tools.governance import settings  # noqa: F401
     from okta_mcp_server.tools.governance import enduser  # noqa: F401
+    from okta_mcp_server.tools.governance import iam_bundles  # noqa: F401
+    from okta_mcp_server.tools.groups import group_rules  # noqa: F401
+    from okta_mcp_server.tools.groups import group_owners  # noqa: F401
     from okta_mcp_server.tools.groups import groups  # noqa: F401
     from okta_mcp_server.tools.policies import policies  # noqa: F401
     from okta_mcp_server.tools.system_logs import system_logs  # noqa: F401
     from okta_mcp_server.tools.users import users  # noqa: F401
+    from okta_mcp_server.tools.users import user_lifecycle  # noqa: F401
+    from okta_mcp_server.tools.users import user_credentials  # noqa: F401
+    from okta_mcp_server.tools.users import user_sessions  # noqa: F401
+    from okta_mcp_server.tools.users import user_factors  # noqa: F401
+    from okta_mcp_server.tools.users import user_oauth  # noqa: F401
+    from okta_mcp_server.tools.profile_mappings import profile_mappings  # noqa: F401
+    from okta_mcp_server.tools.network_zones import network_zones  # noqa: F401
+    from okta_mcp_server.tools.trusted_origins import trusted_origins  # noqa: F401
+    from okta_mcp_server.tools.schema import schema  # noqa: F401
 
     mcp.run()

@@ -348,3 +348,80 @@ async def delete_deactivated_user(user_id: str, ctx: Context = None) -> list:
     except Exception as e:
         logger.error(f"Exception while deleting user {user_id}: {type(e).__name__}: {e}")
         return [f"Exception: {e}"]
+
+
+@mcp.tool()
+@validate_ids("user_id")
+async def replace_user(user_id: str, profile: dict, ctx: Context = None) -> list:
+    """Replace a user's profile in the Okta organization (full replace via PUT).
+
+    Unlike update_user (which does a partial update via POST), this replaces the
+    complete user profile. Any profile attributes not included in the request are
+    cleared. Use update_user for partial changes.
+
+    Parameters:
+        user_id (str, required): The ID of the user to replace.
+        profile (dict, required): The complete profile of the user to set. All
+            required fields (firstName, lastName, email, login) must be included.
+
+    Returns:
+        List containing the updated user details.
+    """
+    logger.info(f"Replacing user with ID: {user_id}")
+
+    manager = ctx.request_context.lifespan_context.okta_auth_manager
+
+    try:
+        client = await get_okta_client(manager)
+        user_data = {"profile": profile}
+        logger.debug(f"Calling Okta API to replace user {user_id}")
+
+        user, _, err = await client.replace_user(user_id, user_data)
+
+        if err:
+            logger.error(f"Okta API error while replacing user {user_id}: {err}")
+            return [f"Error: {err}"]
+
+        logger.info(f"Successfully replaced user: {user_id}")
+        return [user]
+    except Exception as e:
+        logger.error(f"Exception while replacing user {user_id}: {type(e).__name__}: {e}")
+        return [f"Exception: {e}"]
+
+
+@mcp.tool()
+@validate_ids("user_id")
+async def list_user_blocks(user_id: str, ctx: Context = None) -> list:
+    """List all blocks preventing a user from accessing their account.
+
+    Returns information about why a user is blocked from signing in, such as
+    being blocked from unknown devices or all devices.
+
+    Parameters:
+        user_id (str, required): The ID of the user to check for blocks.
+
+    Returns:
+        List of block objects, each containing blockType and the associated
+        error details explaining why the user is blocked.
+    """
+    logger.info(f"Listing blocks for user: {user_id}")
+
+    manager = ctx.request_context.lifespan_context.okta_auth_manager
+
+    try:
+        client = await get_okta_client(manager)
+        blocks, _, err = await client.list_user_blocks(user_id)
+
+        if err:
+            logger.error(f"Okta API error listing blocks for user {user_id}: {err}")
+            return [f"Error: {err}"]
+
+        if not blocks:
+            logger.info(f"No blocks found for user {user_id}")
+            return []
+
+        logger.info(f"Found {len(blocks)} block(s) for user {user_id}")
+        return [b.to_dict() if hasattr(b, "to_dict") else b for b in blocks]
+    except Exception as e:
+        logger.error(f"Exception listing blocks for user {user_id}: {type(e).__name__}: {e}")
+        return [f"Exception: {e}"]

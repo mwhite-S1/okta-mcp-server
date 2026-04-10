@@ -16,12 +16,19 @@ import pytest
 from okta_mcp_server.tools.policies.policies import (
     activate_policy,
     activate_policy_rule,
+    clone_policy,
     create_policy,
     create_policy_rule,
+    create_policy_simulation,
+    delete_policy_resource_mapping,
     get_policy,
+    get_policy_mapping,
     get_policy_rule,
     list_policies,
+    list_policy_apps,
+    list_policy_mappings,
     list_policy_rules,
+    map_resource_to_policy,
     update_policy,
     update_policy_rule,
 )
@@ -654,3 +661,400 @@ class TestPolicyLifecycle:
             ctx=ctx_elicit_accept_true, policy_id="00pnew123", rule_id="0prnew123"
         )
         assert activate_rule_result["success"] is True
+
+
+MAPPING_ID = "mpm1234567890ABCDEF"
+
+
+def _make_mapping(mapping_id=MAPPING_ID):
+    mapping = MagicMock()
+    mapping.id = mapping_id
+    mapping.as_dict.return_value = {"id": mapping_id, "resourceId": "res123", "resourceType": "ACCESS_POLICY"}
+    return mapping
+
+
+# ---------------------------------------------------------------------------
+# clone_policy
+# ---------------------------------------------------------------------------
+
+class TestClonePolicy:
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_clones_policy(self, mock_get_client, ctx_elicit_accept_true):
+        cloned = _make_policy(policy_id="00pclone123", name="Clone of Test Policy")
+        cloned.as_dict.return_value = {"id": "00pclone123", "name": "Clone of Test Policy", "type": "OKTA_SIGN_ON", "status": "ACTIVE"}
+        client = AsyncMock()
+        client.clone_policy.return_value = (cloned, None, None)
+        mock_get_client.return_value = client
+
+        result = await clone_policy(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)
+
+        assert result["id"] == "00pclone123"
+        client.clone_policy.assert_awaited_once_with(POLICY_ID)
+
+    @pytest.mark.asyncio
+    async def test_invalid_id_rejected(self, ctx_elicit_accept_true):
+        result = await clone_policy(ctx=ctx_elicit_accept_true, policy_id="bad/id")
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
+        client = AsyncMock()
+        client.clone_policy.return_value = (None, None, "Policy not found")
+        mock_get_client.return_value = client
+
+        result = await clone_policy(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_exception(self, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.side_effect = Exception("Connection error")
+
+        result = await clone_policy(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)
+
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# create_policy_simulation
+# ---------------------------------------------------------------------------
+
+class TestCreatePolicySimulation:
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_returns_simulation_results(self, mock_get_client, ctx_elicit_accept_true):
+        sim_result = MagicMock()
+        sim_result.as_dict.return_value = {"policyType": "OKTA_SIGN_ON", "status": "MATCH"}
+        client = AsyncMock()
+        client.create_policy_simulation.return_value = ([sim_result], None, None)
+        mock_get_client.return_value = client
+
+        body = [{"policyType": ["OKTA_SIGN_ON"], "policyContext": {"user": {"id": "00u123"}}}]
+        result = await create_policy_simulation(ctx=ctx_elicit_accept_true, simulation_body=body)
+
+        assert result["total_fetched"] == 1
+        client.create_policy_simulation.assert_awaited_once_with(body)
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_empty_result(self, mock_get_client, ctx_elicit_accept_true):
+        client = AsyncMock()
+        client.create_policy_simulation.return_value = ([], None, None)
+        mock_get_client.return_value = client
+
+        result = await create_policy_simulation(ctx=ctx_elicit_accept_true, simulation_body=[])
+
+        assert result["total_fetched"] == 0
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
+        client = AsyncMock()
+        client.create_policy_simulation.return_value = (None, None, "Invalid request")
+        mock_get_client.return_value = client
+
+        result = await create_policy_simulation(ctx=ctx_elicit_accept_true, simulation_body=[])
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_exception(self, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.side_effect = Exception("Connection error")
+
+        result = await create_policy_simulation(ctx=ctx_elicit_accept_true, simulation_body=[])
+
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# list_policy_apps
+# ---------------------------------------------------------------------------
+
+class TestListPolicyApps:
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_returns_apps(self, mock_get_client, ctx_elicit_accept_true):
+        app = MagicMock()
+        app.as_dict.return_value = {"id": "0oa123", "name": "Test App"}
+        client = AsyncMock()
+        client.list_policy_apps.return_value = ([app], None, None)
+        mock_get_client.return_value = client
+
+        result = await list_policy_apps(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)
+
+        assert result["total_fetched"] == 1
+        client.list_policy_apps.assert_awaited_once_with(POLICY_ID)
+
+    @pytest.mark.asyncio
+    async def test_invalid_id_rejected(self, ctx_elicit_accept_true):
+        result = await list_policy_apps(ctx=ctx_elicit_accept_true, policy_id="bad/id")
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
+        client = AsyncMock()
+        client.list_policy_apps.return_value = (None, None, "Policy not found")
+        mock_get_client.return_value = client
+
+        result = await list_policy_apps(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_exception(self, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.side_effect = Exception("Connection error")
+
+        result = await list_policy_apps(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)
+
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# list_policy_mappings
+# ---------------------------------------------------------------------------
+
+class TestListPolicyMappings:
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_returns_mappings(self, mock_get_client, ctx_elicit_accept_true):
+        mapping = _make_mapping()
+        client = AsyncMock()
+        client.list_policy_mappings.return_value = ([mapping], None, None)
+        mock_get_client.return_value = client
+
+        result = await list_policy_mappings(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)
+
+        assert result["total_fetched"] == 1
+        client.list_policy_mappings.assert_awaited_once_with(POLICY_ID)
+
+    @pytest.mark.asyncio
+    async def test_invalid_id_rejected(self, ctx_elicit_accept_true):
+        result = await list_policy_mappings(ctx=ctx_elicit_accept_true, policy_id="bad/id")
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
+        client = AsyncMock()
+        client.list_policy_mappings.return_value = (None, None, "Not found")
+        mock_get_client.return_value = client
+
+        result = await list_policy_mappings(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_exception(self, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.side_effect = Exception("Timeout")
+
+        result = await list_policy_mappings(ctx=ctx_elicit_accept_true, policy_id=POLICY_ID)
+
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# map_resource_to_policy
+# ---------------------------------------------------------------------------
+
+class TestMapResourceToPolicy:
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_creates_mapping(self, mock_get_client, ctx_elicit_accept_true):
+        mapping = _make_mapping()
+        client = AsyncMock()
+        client.map_resource_to_policy.return_value = (mapping, None, None)
+        mock_get_client.return_value = client
+
+        result = await map_resource_to_policy(
+            ctx=ctx_elicit_accept_true,
+            policy_id=POLICY_ID,
+            resource_id="res123",
+        )
+
+        assert result["id"] == MAPPING_ID
+        client.map_resource_to_policy.assert_awaited_once_with(
+            POLICY_ID, {"resourceId": "res123", "resourceType": "ACCESS_POLICY"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_invalid_policy_id_rejected(self, ctx_elicit_accept_true):
+        result = await map_resource_to_policy(
+            ctx=ctx_elicit_accept_true, policy_id="bad/id", resource_id="res123"
+        )
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_custom_resource_type(self, mock_get_client, ctx_elicit_accept_true):
+        mapping = _make_mapping()
+        client = AsyncMock()
+        client.map_resource_to_policy.return_value = (mapping, None, None)
+        mock_get_client.return_value = client
+
+        await map_resource_to_policy(
+            ctx=ctx_elicit_accept_true,
+            policy_id=POLICY_ID,
+            resource_id="res456",
+            resource_type="ACCESS_POLICY",
+        )
+
+        client.map_resource_to_policy.assert_awaited_once_with(
+            POLICY_ID, {"resourceId": "res456", "resourceType": "ACCESS_POLICY"}
+        )
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
+        client = AsyncMock()
+        client.map_resource_to_policy.return_value = (None, None, "Invalid mapping")
+        mock_get_client.return_value = client
+
+        result = await map_resource_to_policy(
+            ctx=ctx_elicit_accept_true, policy_id=POLICY_ID, resource_id="res123"
+        )
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_exception(self, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.side_effect = Exception("Connection error")
+
+        result = await map_resource_to_policy(
+            ctx=ctx_elicit_accept_true, policy_id=POLICY_ID, resource_id="res123"
+        )
+
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# get_policy_mapping
+# ---------------------------------------------------------------------------
+
+class TestGetPolicyMapping:
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_returns_mapping(self, mock_get_client, ctx_elicit_accept_true):
+        mapping = _make_mapping()
+        client = AsyncMock()
+        client.get_policy_mapping.return_value = (mapping, None, None)
+        mock_get_client.return_value = client
+
+        result = await get_policy_mapping(
+            ctx=ctx_elicit_accept_true, policy_id=POLICY_ID, mapping_id=MAPPING_ID
+        )
+
+        assert result["id"] == MAPPING_ID
+        client.get_policy_mapping.assert_awaited_once_with(POLICY_ID, MAPPING_ID)
+
+    @pytest.mark.asyncio
+    async def test_invalid_policy_id_rejected(self, ctx_elicit_accept_true):
+        result = await get_policy_mapping(
+            ctx=ctx_elicit_accept_true, policy_id="bad/id", mapping_id=MAPPING_ID
+        )
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_invalid_mapping_id_rejected(self, ctx_elicit_accept_true):
+        result = await get_policy_mapping(
+            ctx=ctx_elicit_accept_true, policy_id=POLICY_ID, mapping_id="bad/id"
+        )
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
+        client = AsyncMock()
+        client.get_policy_mapping.return_value = (None, None, "Mapping not found")
+        mock_get_client.return_value = client
+
+        result = await get_policy_mapping(
+            ctx=ctx_elicit_accept_true, policy_id=POLICY_ID, mapping_id=MAPPING_ID
+        )
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_exception(self, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.side_effect = Exception("Connection error")
+
+        result = await get_policy_mapping(
+            ctx=ctx_elicit_accept_true, policy_id=POLICY_ID, mapping_id=MAPPING_ID
+        )
+
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# delete_policy_resource_mapping
+# ---------------------------------------------------------------------------
+
+class TestDeletePolicyResourceMapping:
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_deletes_mapping(self, mock_get_client, ctx_elicit_accept_true):
+        client = AsyncMock()
+        client.delete_policy_resource_mapping.return_value = (None, None, None)
+        mock_get_client.return_value = client
+
+        result = await delete_policy_resource_mapping(
+            ctx=ctx_elicit_accept_true, policy_id=POLICY_ID, mapping_id=MAPPING_ID
+        )
+
+        assert "message" in result
+        assert MAPPING_ID in result["message"]
+        client.delete_policy_resource_mapping.assert_awaited_once_with(POLICY_ID, MAPPING_ID)
+
+    @pytest.mark.asyncio
+    async def test_invalid_policy_id_rejected(self, ctx_elicit_accept_true):
+        result = await delete_policy_resource_mapping(
+            ctx=ctx_elicit_accept_true, policy_id="bad/id", mapping_id=MAPPING_ID
+        )
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_invalid_mapping_id_rejected(self, ctx_elicit_accept_true):
+        result = await delete_policy_resource_mapping(
+            ctx=ctx_elicit_accept_true, policy_id=POLICY_ID, mapping_id="bad/id"
+        )
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_api_error(self, mock_get_client, ctx_elicit_accept_true):
+        client = AsyncMock()
+        client.delete_policy_resource_mapping.return_value = (None, None, "Mapping not found")
+        mock_get_client.return_value = client
+
+        result = await delete_policy_resource_mapping(
+            ctx=ctx_elicit_accept_true, policy_id=POLICY_ID, mapping_id=MAPPING_ID
+        )
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    @patch(PATCH_CLIENT)
+    async def test_exception(self, mock_get_client, ctx_elicit_accept_true):
+        mock_get_client.side_effect = Exception("Connection error")
+
+        result = await delete_policy_resource_mapping(
+            ctx=ctx_elicit_accept_true, policy_id=POLICY_ID, mapping_id=MAPPING_ID
+        )
+
+        assert "error" in result

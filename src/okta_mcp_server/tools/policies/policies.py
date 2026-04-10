@@ -5,7 +5,7 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and limitations under the License.
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
 from mcp.server.fastmcp import Context
@@ -546,4 +546,233 @@ async def deactivate_policy_rule(ctx: Context, policy_id: str, rule_id: str) -> 
 
     except Exception as e:
         logger.error(f"Exception deactivating policy rule: {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
+@validate_ids("policy_id", error_return_type="dict")
+async def clone_policy(ctx: Context, policy_id: str) -> Dict[str, Any]:
+    """Clone an existing policy.
+
+    Creates a new copy of the specified policy with all its settings.
+
+    Parameters:
+        policy_id (str, required): The ID of the policy to clone.
+
+    Returns:
+        Dict containing the cloned policy details.
+    """
+    logger.info(f"Cloning policy {policy_id}")
+    manager = ctx.request_context.lifespan_context.okta_auth_manager
+    try:
+        okta_client = await get_okta_client(manager)
+        policy, _, err = await okta_client.clone_policy(policy_id)
+        if err:
+            logger.error(f"Error cloning policy {policy_id}: {err}")
+            return {"error": str(err)}
+        logger.info(f"Cloned policy {policy_id} → new policy created")
+        return to_dict(policy) if policy else {}
+    except Exception as e:
+        logger.error(f"Exception cloning policy {policy_id}: {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def create_policy_simulation(
+    ctx: Context,
+    simulation_body: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Simulate policy evaluation for given contexts.
+
+    Evaluates policies and policy rules based on existing configuration without
+    actually enforcing them. Useful for testing how sign-on or MFA policies
+    behave under different conditions.
+
+    Parameters:
+        simulation_body (list, required): List of simulation request objects, each containing:
+            - policyType (list of str): Policy types to simulate, e.g. ["OKTA_SIGN_ON", "MFA_ENROLL"].
+            - appInstance (str, optional): Application instance ID to simulate against.
+            - policyContext (dict, optional): Simulation context with fields:
+                - groups (dict): Group membership context (include list of group IDs).
+                - risk (dict): Risk context (e.g. {"level": "LOW"}).
+                - zones (dict): Network zone context.
+                - device (dict): Device context.
+                - user (dict): User context (e.g. {"id": "<userId>"}).
+
+    Returns:
+        Dict with items (list of simulation results per policy type).
+    """
+    logger.info("Creating policy simulation")
+    manager = ctx.request_context.lifespan_context.okta_auth_manager
+    try:
+        okta_client = await get_okta_client(manager)
+        results, _, err = await okta_client.create_policy_simulation(simulation_body)
+        if err:
+            logger.error(f"Error running policy simulation: {err}")
+            return {"error": str(err)}
+        items = [to_dict(r) if r else r for r in (results or [])]
+        logger.info(f"Policy simulation completed with {len(items)} result(s)")
+        return {"items": items, "total_fetched": len(items)}
+    except Exception as e:
+        logger.error(f"Exception running policy simulation: {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
+@validate_ids("policy_id", error_return_type="dict")
+async def list_policy_apps(ctx: Context, policy_id: str) -> Dict[str, Any]:
+    """List all applications mapped to a policy.
+
+    Note: This endpoint is deprecated. Use list_policy_mappings instead.
+
+    Parameters:
+        policy_id (str, required): The ID of the policy.
+
+    Returns:
+        Dict with items (list of application objects mapped to the policy).
+    """
+    logger.info(f"Listing apps for policy {policy_id} (deprecated endpoint)")
+    manager = ctx.request_context.lifespan_context.okta_auth_manager
+    try:
+        okta_client = await get_okta_client(manager)
+        apps, _, err = await okta_client.list_policy_apps(policy_id)
+        if err:
+            logger.error(f"Error listing apps for policy {policy_id}: {err}")
+            return {"error": str(err)}
+        items = [to_dict(a) if a else a for a in (apps or [])]
+        logger.info(f"Retrieved {len(items)} app(s) for policy {policy_id}")
+        return {"items": items, "total_fetched": len(items)}
+    except Exception as e:
+        logger.error(f"Exception listing apps for policy {policy_id}: {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
+@validate_ids("policy_id", error_return_type="dict")
+async def list_policy_mappings(ctx: Context, policy_id: str) -> Dict[str, Any]:
+    """List all resource mappings for a policy.
+
+    Returns all resources (such as app sign-on policies) currently mapped to
+    the specified policy.
+
+    Parameters:
+        policy_id (str, required): The ID of the policy.
+
+    Returns:
+        Dict with items (list of PolicyMapping objects).
+    """
+    logger.info(f"Listing mappings for policy {policy_id}")
+    manager = ctx.request_context.lifespan_context.okta_auth_manager
+    try:
+        okta_client = await get_okta_client(manager)
+        mappings, _, err = await okta_client.list_policy_mappings(policy_id)
+        if err:
+            logger.error(f"Error listing mappings for policy {policy_id}: {err}")
+            return {"error": str(err)}
+        items = [to_dict(m) if m else m for m in (mappings or [])]
+        logger.info(f"Retrieved {len(items)} mapping(s) for policy {policy_id}")
+        return {"items": items, "total_fetched": len(items)}
+    except Exception as e:
+        logger.error(f"Exception listing mappings for policy {policy_id}: {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
+@validate_ids("policy_id", error_return_type="dict")
+async def map_resource_to_policy(
+    ctx: Context,
+    policy_id: str,
+    resource_id: str,
+    resource_type: str = "ACCESS_POLICY",
+) -> Dict[str, Any]:
+    """Map a resource to a policy.
+
+    Associates a resource (such as an app sign-on policy) with a global
+    sign-on policy.
+
+    Parameters:
+        policy_id (str, required): The ID of the policy to map to.
+        resource_id (str, required): The ID of the resource (e.g. app sign-on policy ID).
+        resource_type (str, optional): The type of resource. Only valid value: "ACCESS_POLICY".
+            Default: "ACCESS_POLICY".
+
+    Returns:
+        Dict containing the created PolicyMapping.
+    """
+    logger.info(f"Mapping resource {resource_id} ({resource_type}) to policy {policy_id}")
+    manager = ctx.request_context.lifespan_context.okta_auth_manager
+    try:
+        okta_client = await get_okta_client(manager)
+        body = {"resourceId": resource_id, "resourceType": resource_type}
+        mapping, _, err = await okta_client.map_resource_to_policy(policy_id, body)
+        if err:
+            logger.error(f"Error mapping resource to policy {policy_id}: {err}")
+            return {"error": str(err)}
+        logger.info(f"Mapped resource {resource_id} to policy {policy_id}")
+        return to_dict(mapping) if mapping else {}
+    except Exception as e:
+        logger.error(f"Exception mapping resource to policy {policy_id}: {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
+@validate_ids("policy_id", "mapping_id", error_return_type="dict")
+async def get_policy_mapping(
+    ctx: Context,
+    policy_id: str,
+    mapping_id: str,
+) -> Dict[str, Any]:
+    """Retrieve a specific resource mapping for a policy.
+
+    Parameters:
+        policy_id (str, required): The ID of the policy.
+        mapping_id (str, required): The ID of the resource mapping.
+
+    Returns:
+        Dict containing the PolicyMapping details.
+    """
+    logger.info(f"Getting mapping {mapping_id} for policy {policy_id}")
+    manager = ctx.request_context.lifespan_context.okta_auth_manager
+    try:
+        okta_client = await get_okta_client(manager)
+        mapping, _, err = await okta_client.get_policy_mapping(policy_id, mapping_id)
+        if err:
+            logger.error(f"Error getting mapping {mapping_id} for policy {policy_id}: {err}")
+            return {"error": str(err)}
+        return to_dict(mapping) if mapping else {}
+    except Exception as e:
+        logger.error(f"Exception getting policy mapping: {e}")
+        return {"error": str(e)}
+
+
+@mcp.tool()
+@validate_ids("policy_id", "mapping_id", error_return_type="dict")
+async def delete_policy_resource_mapping(
+    ctx: Context,
+    policy_id: str,
+    mapping_id: str,
+) -> Dict[str, Any]:
+    """Delete a resource mapping from a policy.
+
+    Removes the association between a resource and the specified policy.
+
+    Parameters:
+        policy_id (str, required): The ID of the policy.
+        mapping_id (str, required): The ID of the resource mapping to delete.
+
+    Returns:
+        Dict confirming deletion.
+    """
+    logger.warning(f"Deleting mapping {mapping_id} from policy {policy_id}")
+    manager = ctx.request_context.lifespan_context.okta_auth_manager
+    try:
+        okta_client = await get_okta_client(manager)
+        _, _, err = await okta_client.delete_policy_resource_mapping(policy_id, mapping_id)
+        if err:
+            logger.error(f"Error deleting mapping {mapping_id} from policy {policy_id}: {err}")
+            return {"error": str(err)}
+        logger.info(f"Deleted mapping {mapping_id} from policy {policy_id}")
+        return {"message": f"Resource mapping {mapping_id} deleted from policy {policy_id}."}
+    except Exception as e:
+        logger.error(f"Exception deleting policy mapping: {e}")
         return {"error": str(e)}
