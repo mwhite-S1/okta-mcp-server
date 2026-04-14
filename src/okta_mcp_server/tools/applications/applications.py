@@ -21,7 +21,7 @@ from okta_mcp_server.utils.serialize import to_dict
 from okta_mcp_server.utils.validation import validate_ids
 
 
-async def _execute(client, method: str, path: str, body: dict = None):
+async def _execute(client, method: str, path: str, body: dict = None, keep_empty_params: bool = False):
     """Make a direct API call bypassing SDK Pydantic deserialization.
 
     Returns (response, body, error). response carries HTTP headers (e.g. Link
@@ -29,7 +29,7 @@ async def _execute(client, method: str, path: str, body: dict = None):
     """
     request_executor = client.get_request_executor()
     url = f"{client.get_base_url()}{path}"
-    request, error = await request_executor.create_request(method, url, body or {})
+    request, error = await request_executor.create_request(method, url, body or {}, keep_empty_params=keep_empty_params)
     if error:
         return None, None, error
     response, response_body, error = await request_executor.execute(request)
@@ -222,17 +222,18 @@ async def create_application(ctx: Context, app_config: Dict[str, Any], activate:
     try:
         client = await get_okta_client(manager)
 
-        query_params = {"activate": activate}
+        activate_str = "true" if activate else "false"
+        path = f"/api/v1/apps?activate={activate_str}"
 
         logger.debug("Calling Okta API to create application")
-        app, _, err = await client.create_application(app_config, **query_params)
+        _, app, err = await _execute(client, "POST", path, app_config, keep_empty_params=True)
 
         if err:
             logger.error(f"Okta API error while creating application: {err}")
             return {"error": str(err)}
 
         logger.info(f"Successfully created application")
-        return to_dict(app)
+        return app if isinstance(app, dict) else to_dict(app)
     except Exception as e:
         logger.error(f"Exception while creating application: {type(e).__name__}: {e}")
         return {"error": str(e)}

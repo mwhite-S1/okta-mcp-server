@@ -5,6 +5,7 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and limitations under the License.
 
+import json as _json
 from typing import Optional
 
 from loguru import logger
@@ -17,6 +18,26 @@ from okta_mcp_server.utils.messages import DELETE_GROUP
 from okta_mcp_server.utils.pagination import build_query_params, create_paginated_response, paginate_all_results
 from okta_mcp_server.utils.serialize import to_dict
 from okta_mcp_server.utils.validation import validate_ids
+
+
+async def _execute(client, method: str, path: str, body: dict = None):
+    """Make a direct API call bypassing SDK Pydantic deserialization."""
+    request_executor = client.get_request_executor()
+    url = f"{client.get_base_url()}{path}"
+    request, error = await request_executor.create_request(method, url, body or {})
+    if error:
+        return None, None, error
+    response, response_body, error = await request_executor.execute(request)
+    if error:
+        return None, None, error
+    if not response_body:
+        return response, None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response, response_body, None
 
 
 @mcp.tool()
@@ -483,7 +504,7 @@ async def add_user_to_group(group_id: str, user_id: str, ctx: Context = None) ->
         client = await get_okta_client(manager)
         logger.debug(f"Calling Okta API to add user {user_id} to group {group_id}")
 
-        _, err = await client.add_user_to_group(group_id, user_id)
+        _, _, err = await _execute(client, "PUT", f"/api/v1/groups/{group_id}/users/{user_id}")
 
         if err:
             logger.error(f"Okta API error while adding user {user_id} to group {group_id}: {err}")
@@ -518,7 +539,7 @@ async def remove_user_from_group(group_id: str, user_id: str, ctx: Context = Non
         client = await get_okta_client(manager)
         logger.debug(f"Calling Okta API to remove user {user_id} from group {group_id}")
 
-        _, err = await client.remove_user_from_group(group_id, user_id)
+        _, _, err = await _execute(client, "DELETE", f"/api/v1/groups/{group_id}/users/{user_id}")
 
         if err:
             logger.error(f"Okta API error while removing user {user_id} from group {group_id}: {err}")

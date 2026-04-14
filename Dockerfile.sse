@@ -1,0 +1,36 @@
+FROM python:3.13-slim
+
+LABEL Title="Okta MCP Server (HTTP/SSE)" \
+      Description="Okta MCP Server running with streamable-HTTP transport for Docker networking" \
+      Version="1.0.0"
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# Copy dependency files first (better layer caching)
+COPY pyproject.toml uv.lock ./
+COPY src ./src
+COPY README.md ./
+COPY run_sse.py ./
+
+RUN uv sync --no-dev
+
+# Create non-root user and pre-create the keyring directory so the named
+# Docker volume is initialised with appuser ownership, not root.
+RUN useradd --create-home --shell /bin/bash appuser \
+    && mkdir -p /home/appuser/.local/share/python_keyring \
+    && chown -R appuser:appuser /app /home/appuser
+USER appuser
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+ENV PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring
+ENV MCP_TRANSPORT=sse
+ENV MCP_HOST=0.0.0.0
+ENV MCP_PORT=8001
+
+EXPOSE 8001
+
+ENTRYPOINT ["python", "run_sse.py"]

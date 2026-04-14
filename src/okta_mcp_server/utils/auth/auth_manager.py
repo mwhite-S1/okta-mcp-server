@@ -45,7 +45,19 @@ class OktaAuthManager:
         self.scopes = f"{self.scopes} {os.environ.get('OKTA_SCOPES', '').strip()}"
 
         # Check for browserless auth configuration
-        self.private_key = os.environ.get("OKTA_PRIVATE_KEY")
+        # Prefer file-based key (OKTA_PRIVATE_KEY_FILE) over inline env var (OKTA_PRIVATE_KEY)
+        key_file = os.environ.get("OKTA_PRIVATE_KEY_FILE")
+        if key_file:
+            try:
+                with open(key_file, "r") as f:
+                    self.private_key = f.read().strip()
+                logger.info(f"Loaded private key from file: {key_file}")
+            except OSError as e:
+                logger.error(f"Failed to read OKTA_PRIVATE_KEY_FILE '{key_file}': {e}")
+                self.private_key = None
+        else:
+            self.private_key = os.environ.get("OKTA_PRIVATE_KEY")
+
         self.key_id = os.environ.get("OKTA_KEY_ID")
 
         if self.private_key and self.key_id:
@@ -66,6 +78,11 @@ class OktaAuthManager:
         if not self.org_url.startswith("https://"):
             self.org_url = "https://" + self.org_url
             logger.debug(f"Added https:// prefix to org_url: {self.org_url}")
+
+        # In-memory token: per-instance, isolated from other concurrent connections.
+        # Using keyring alone is not safe because concurrent SSE sessions share
+        # the same keyring key and one session's clear_tokens() can wipe another's.
+        self._access_token: str | None = None
 
         logger.info(f"OktaAuthManager initialized with org_url: {self.org_url}, client_id: {self.client_id}")
         logger.debug(f"Configured scopes: {self.scopes}")
@@ -137,6 +154,7 @@ class OktaAuthManager:
 
                 if access_token:
                     logger.info("Successfully obtained access token via browserless authentication")
+                    self._access_token = access_token
                     keyring.set_password(SERVICE_NAME, "api_token", access_token)
                     self.token_timestamp = int(time.time())
 
@@ -210,6 +228,7 @@ class OktaAuthManager:
 
                 if response.status_code == 200 and "access_token" in resp_json:
                     logger.info("Successfully obtained access token")
+                    self._access_token = resp_json["access_token"]
                     keyring.set_password(SERVICE_NAME, "api_token", resp_json["access_token"])
                     self.token_timestamp = int(time.time())
 
@@ -265,6 +284,7 @@ class OktaAuthManager:
 
             if response.status_code == 200:
                 resp_json = response.json()
+                self._access_token = resp_json["access_token"]
                 keyring.set_password(SERVICE_NAME, "api_token", resp_json["access_token"])
 
                 if "refresh_token" in resp_json:
@@ -359,5 +379,6 @@ class OktaAuthManager:
         except keyring.backend.errors.KeyringError as e:
             logger.warning(f"Failed to delete refresh_token from keyring: {e}")
 
+        self._access_token = None
         self.token_timestamp = 0
         logger.info("Token cleanup completed")

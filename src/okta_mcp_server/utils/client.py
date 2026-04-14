@@ -15,11 +15,24 @@ from okta_mcp_server.utils.auth.auth_manager import SERVICE_NAME, OktaAuthManage
 async def get_okta_client(manager: OktaAuthManager) -> OktaClient:
     """Initialize and return an Okta client"""
     logger.debug("Initializing Okta client")
-    api_token = keyring.get_password(SERVICE_NAME, "api_token")
+
+    # Ensure a valid token exists (re-auths if needed).
+    # is_valid_token() already calls authenticate() internally when the token
+    # is missing or expired, so we only need to catch the case where it
+    # returns False without re-authing.
     if not await manager.is_valid_token():
         logger.warning("Token is invalid or expired, re-authenticating")
         await manager.authenticate()
-        api_token = keyring.get_password(SERVICE_NAME, "api_token")
+
+    # Prefer the in-memory instance token — it is per-connection and cannot be
+    # wiped by another session's clear_tokens().  Fall back to keyring only for
+    # device-flow sessions that never set _access_token directly.
+    api_token = manager._access_token or keyring.get_password(SERVICE_NAME, "api_token")
+
+    if not api_token:
+        logger.error("No API token available after authentication")
+        raise RuntimeError("Okta API token unavailable")
+
     config = {
         "orgUrl": manager.org_url,
         "token": api_token,
