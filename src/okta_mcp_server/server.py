@@ -15,8 +15,17 @@ from loguru import logger
 from mcp.server.fastmcp import FastMCP
 
 from okta_mcp_server.utils.auth.auth_manager import OktaAuthManager
+from okta_mcp_server.utils.auth.middleware import _user_token_var
 
 LOG_FILE = os.environ.get("OKTA_LOG_FILE")
+
+# Comma-separated list of Okta group names that are allowed to use this MCP server.
+# If empty, no group restriction is enforced.
+_ALLOWED_GROUPS: list[str] = [
+    g.strip()
+    for g in os.environ.get("OKTA_ALLOWED_GROUPS", "").split(",")
+    if g.strip()
+]
 
 
 @dataclass
@@ -26,13 +35,43 @@ class OktaAppContext:
 
 @asynccontextmanager
 async def okta_authorisation_flow(server: FastMCP) -> AsyncIterator[OktaAppContext]:
+    """Per-connection lifecycle: authenticate the caller and yield context for tools.
+
+    When the API Gateway forwards the user's Okta access token via the
+    Authorization header on the SSE connection, that token is extracted by
+    TokenExtractionMiddleware and stored in _user_token_var. We use it here
+    so every Okta API call runs under the caller's identity.
+
+    Falls back to the service account flows (browserless / device) when no
+    delegated token is present — useful for local development without the gateway.
     """
-    Manages the application lifecycle. It initializes the OktaManager on startup,
-    performs authorization, and yields the context for use in tools.
-    """
-    logger.info("Starting Okta authorization flow")
+    token = _user_token_var.get()
     manager = OktaAuthManager()
-    await manager.authenticate()
+
+    if token:
+        logger.info("Using user-delegated token for this MCP session")
+        try:
+            await manager.set_delegated_token(token)
+        except ValueError as exc:
+            logger.error(f"Delegated token rejected: {exc}")
+            raise RuntimeError(f"Invalid or expired authorization token: {exc}") from exc
+    else:
+        logger.info("No delegated token — initiating interactive device authorization flow")
+        try:
+            await manager.authenticate()
+        except RuntimeError as exc:
+            logger.error(f"Authentication failed: {exc}")
+            raise
+
+    # Group membership check — runs for both delegated and device flow tokens.
+    # Rejects the session immediately if the user is not in an allowed group.
+    if _ALLOWED_GROUPS:
+        try:
+            await manager.check_group_membership(_ALLOWED_GROUPS)
+        except PermissionError as exc:
+            logger.error(f"Access denied: {exc}")
+            raise RuntimeError(str(exc)) from exc
+
     logger.info("Okta authentication completed successfully")
 
     try:

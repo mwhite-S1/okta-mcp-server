@@ -77,26 +77,41 @@ from okta_mcp_server.tools.schema import schema  # noqa: F401
 from okta_mcp_server.server import mcp  # noqa: E402
 
 if __name__ == "__main__":
+    import uvicorn
+
+    from okta_mcp_server.utils.auth.middleware import TokenExtractionMiddleware
+
     host = os.environ.get("MCP_HOST", "0.0.0.0")
     port = int(os.environ.get("MCP_PORT", "8001"))
     transport = os.environ.get("MCP_TRANSPORT", "sse")
 
     logger.info(f"Listening on {host}:{port} with transport={transport}")
 
-    # FastMCP configures host/port via settings, not run() kwargs
-    if hasattr(mcp, "settings"):
-        mcp.settings.host = host
-        mcp.settings.port = port
+    if transport == "sse":
+        # Configure host/port via FastMCP settings so sse_app() uses them
+        if hasattr(mcp, "settings"):
+            mcp.settings.host = host
+            mcp.settings.port = port
 
-        # Disable DNS-rebinding protection: this server only listens on the
-        # internal Docker app-mcp network and is never reachable from outside
-        # the compose stack, so the host-header allowlist is unnecessary friction.
-        try:
-            from mcp.server.transport_security import TransportSecuritySettings
-            mcp.settings.transport_security = TransportSecuritySettings(
-                enable_dns_rebinding_protection=False
-            )
-        except ImportError:
-            pass  # older SDK version without this setting
+            # Disable DNS-rebinding protection: the server is only reachable from
+            # the internal Docker app-mcp network, so the host-header allowlist is
+            # unnecessary friction.
+            try:
+                from mcp.server.transport_security import TransportSecuritySettings
+                mcp.settings.transport_security = TransportSecuritySettings(
+                    enable_dns_rebinding_protection=False
+                )
+            except ImportError:
+                pass
 
-    mcp.run(transport=transport)
+        # Build the Starlette ASGI app and wrap it with our token extraction middleware
+        # so each SSE connection's Authorization header is forwarded to the per-connection
+        # lifespan (okta_authorisation_flow) via a contextvars.ContextVar.
+        starlette_app = mcp.sse_app()
+        app_with_auth = TokenExtractionMiddleware(starlette_app)
+
+        logger.info("Starting SSE server with per-user token extraction middleware")
+        uvicorn.run(app_with_auth, host=host, port=port, log_level="warning")
+    else:
+        # stdio transport — run directly (no middleware needed)
+        mcp.run(transport=transport)

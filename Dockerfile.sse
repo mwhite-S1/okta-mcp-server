@@ -17,16 +17,12 @@ COPY run_sse.py ./
 
 RUN uv sync --no-dev
 
-# Create non-root user and pre-create the keyring directory so the named
-# Docker volume is initialised with appuser ownership, not root.
 RUN useradd --create-home --shell /bin/bash appuser \
-    && mkdir -p /home/appuser/.local/share/python_keyring \
     && chown -R appuser:appuser /app /home/appuser
 USER appuser
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
-ENV PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring
 ENV MCP_TRANSPORT=sse
 ENV MCP_HOST=0.0.0.0
 ENV MCP_PORT=8001

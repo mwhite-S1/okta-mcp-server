@@ -20,6 +20,8 @@ import keyring.backend
 import requests
 from loguru import logger
 
+from okta_mcp_server.utils.auth.token_validator import is_token_expiring_soon, validate_okta_token
+
 SERVICE_NAME = "OktaAuthManager"
 
 
@@ -34,6 +36,7 @@ class OktaAuthManager:
     private_key: str = field(init=False, default=None)
     key_id: str = field(init=False, default=None)
     use_browserless_auth: bool = field(init=False, default=False)
+    use_delegated_token: bool = field(init=False, default=False)
 
     # TODO: Implement a way to set scopes dynamically by the user if needed.
 
@@ -71,9 +74,13 @@ class OktaAuthManager:
                 logger.warning("Private key found but OKTA_KEY_ID is missing. Using device flow instead.")
             logger.info("Using device authorization flow for authentication")
 
-        if not self.org_url or not self.client_id:
-            logger.error("OKTA_ORG_URL and OKTA_CLIENT_ID must be set in environment variables")
+        if not self.org_url:
+            logger.error("OKTA_ORG_URL must be set in environment variables")
             sys.exit(1)
+
+        # OKTA_CLIENT_ID is only required for service account flows (browserless / device).
+        # Delegated-token connections (user's PKCE token forwarded via Authorization header)
+        # do not need it. We defer the missing-client-id error to authenticate().
 
         if not self.org_url.startswith("https://"):
             self.org_url = "https://" + self.org_url
@@ -302,8 +309,98 @@ class OktaAuthManager:
             logger.error(f"Error during token refresh: {e}")
             return False
 
+    async def check_group_membership(self, allowed_groups: list[str]) -> None:
+        """Raise PermissionError if the authenticated user is not in any allowed group.
+
+        Uses the Okta Management API (/api/v1/users/me/groups) rather than the
+        JWT groups claim — the org authorization server does not support custom
+        claims, so the token will never carry a groups array.
+
+        Requires okta.users.read scope (present in all our tokens).
+        If allowed_groups is empty the check is skipped.
+        """
+        if not allowed_groups or not self._access_token:
+            return
+
+        # Decode sub for logging (no signature re-check needed).
+        sub = "unknown"
+        try:
+            claims = jwt.decode(self._access_token, options={"verify_signature": False}, algorithms=["RS256"])
+            sub = claims.get("sub", "unknown")
+        except Exception:
+            pass
+
+        # Log scopes in the token to help diagnose 403s from missing scopes.
+        try:
+            token_claims = jwt.decode(self._access_token, options={"verify_signature": False}, algorithms=["RS256"])
+            logger.info(f"Token scopes for group check: {token_claims.get('scp', token_claims.get('scope', 'not found'))}")
+        except Exception:
+            pass
+
+        token_scopes: list[str] = []
+        try:
+            sc = jwt.decode(self._access_token, options={"verify_signature": False}, algorithms=["RS256"])
+            token_scopes = sc.get("scp", sc.get("scope", []))
+            if isinstance(token_scopes, str):
+                token_scopes = token_scopes.split()
+        except Exception:
+            pass
+
+        if "okta.users.read" not in token_scopes:
+            raise PermissionError(
+                f"Cannot verify group membership for '{sub}': token lacks okta.users.read scope."
+            )
+
+        auth_header = f"Bearer {self._access_token}"
+        url = f"{self.org_url.rstrip('/')}/api/v1/users/me/groups"
+
+        try:
+            response = requests.get(
+                url,
+                headers={"Authorization": auth_header, "Accept": "application/json"},
+                timeout=10,
+            )
+            response.raise_for_status()
+            user_groups = [g.get("profile", {}).get("name", "") for g in response.json()]
+        except requests.RequestException as exc:
+            raise PermissionError(
+                f"Could not verify group membership for '{sub}': {exc}"
+            ) from exc
+
+        logger.debug(f"User '{sub}' groups from API: {user_groups}")
+
+        if not any(g in allowed_groups for g in user_groups):
+            raise PermissionError(
+                f"User '{sub}' is not a member of any allowed group. "
+                f"Required one of: {allowed_groups}. "
+                f"User belongs to: {user_groups or ['(none)']}"
+            )
+
+        logger.info(f"Group membership validated for '{sub}'")
+
+    async def set_delegated_token(self, token: str) -> None:
+        """Accept a user-delegated Okta OAuth token instead of self-authenticating.
+
+        Validates the token via Okta's JWKS endpoint, then stores it for use by
+        tool calls. All Okta API calls made with this token will run under the
+        caller's identity, so Okta natively enforces their admin role.
+
+        Raises ValueError if the token is invalid or expired.
+        """
+        logger.info("Validating user-delegated Okta token via JWKS")
+        validate_okta_token(token, self.org_url)  # raises ValueError on failure
+        self._access_token = token
+        self.token_timestamp = int(time.time())
+        self.use_delegated_token = True
+        logger.info("Delegated token accepted and stored for this MCP session")
+
     async def authenticate(self):
         """Perform full authentication using the appropriate flow."""
+        if not self.client_id:
+            raise RuntimeError(
+                "No Authorization header and no OKTA_CLIENT_ID configured — "
+                "cannot authenticate. Connect with a valid Bearer token."
+            )
         if self.use_browserless_auth:
             logger.info("Using browserless authentication flow")
             token = self._browserless_authenticate()
@@ -340,6 +437,15 @@ class OktaAuthManager:
         """Ensure that a valid token is available. Refresh or re-authenticate if needed."""
         logger.debug(f"Checking token validity (expiry duration: {expiry_duration}s)")
 
+        if self.use_delegated_token:
+            # For user-delegated tokens, check the JWT exp claim directly.
+            # We cannot re-authenticate — the user must log in again via the UI.
+            if self._access_token and not is_token_expiring_soon(self._access_token):
+                logger.debug("Delegated token is still valid")
+                return True
+            logger.warning("User's delegated token has expired or is expiring soon")
+            return False
+
         api_token = keyring.get_password(SERVICE_NAME, "api_token")
         token_age = time.time() - self.token_timestamp
 
@@ -364,20 +470,22 @@ class OktaAuthManager:
         return keyring.get_password(SERVICE_NAME, "api_token") is not None
 
     def clear_tokens(self):
-        """Clear all stored tokens from keyring."""
+        """Clear all stored tokens from keyring and memory."""
         logger.info("Clearing stored tokens")
 
-        try:
-            keyring.delete_password(SERVICE_NAME, "api_token")
-            logger.debug("API token deleted from keyring")
-        except keyring.backend.errors.KeyringError as e:
-            logger.warning(f"Failed to delete api_token from keyring: {e}")
+        if not self.use_delegated_token:
+            # Only touch keyring for service account flows; delegated tokens are memory-only.
+            try:
+                keyring.delete_password(SERVICE_NAME, "api_token")
+                logger.debug("API token deleted from keyring")
+            except keyring.backend.errors.KeyringError as e:
+                logger.warning(f"Failed to delete api_token from keyring: {e}")
 
-        try:
-            keyring.delete_password(SERVICE_NAME, "refresh_token")
-            logger.debug("Refresh token deleted from keyring")
-        except keyring.backend.errors.KeyringError as e:
-            logger.warning(f"Failed to delete refresh_token from keyring: {e}")
+            try:
+                keyring.delete_password(SERVICE_NAME, "refresh_token")
+                logger.debug("Refresh token deleted from keyring")
+            except keyring.backend.errors.KeyringError as e:
+                logger.warning(f"Failed to delete refresh_token from keyring: {e}")
 
         self._access_token = None
         self.token_timestamp = 0

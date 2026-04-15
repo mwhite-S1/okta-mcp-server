@@ -17,10 +17,12 @@ async def get_okta_client(manager: OktaAuthManager) -> OktaClient:
     logger.debug("Initializing Okta client")
 
     # Ensure a valid token exists (re-auths if needed).
-    # is_valid_token() already calls authenticate() internally when the token
-    # is missing or expired, so we only need to catch the case where it
-    # returns False without re-authing.
     if not await manager.is_valid_token():
+        if manager.use_delegated_token:
+            raise RuntimeError(
+                "User's delegated Okta token has expired. "
+                "Please log out and log in again to refresh your session."
+            )
         logger.warning("Token is invalid or expired, re-authenticating")
         await manager.authenticate()
 
