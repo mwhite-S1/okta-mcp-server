@@ -254,9 +254,17 @@ async def deactivate_device(ctx: Context, device_id: str) -> dict:
     """
     logger.info(f"Deactivation requested for device: {device_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _, _dev_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/devices/{device_id}")
+        _dev_name = (_dev_obj.get("profile", {}) or {}).get("displayName", "") if isinstance(_dev_obj, dict) else ""
+    except Exception:
+        _dev_name = ""
+    _dev_resource = f"'{_dev_name}' ({device_id})" if _dev_name else device_id
+
     outcome = await elicit_or_fallback(
         ctx,
-        message=DEACTIVATE_DEVICE.format(device_id=device_id),
+        message=DEACTIVATE_DEVICE.format(resource=_dev_resource),
         schema=DeactivateConfirmation,
         auto_confirm_on_fallback=True,
     )
@@ -299,9 +307,17 @@ async def suspend_device(ctx: Context, device_id: str) -> dict:
     """
     logger.info(f"Suspension requested for device: {device_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _, _dev_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/devices/{device_id}")
+        _dev_name = (_dev_obj.get("profile", {}) or {}).get("displayName", "") if isinstance(_dev_obj, dict) else ""
+    except Exception:
+        _dev_name = ""
+    _dev_resource = f"'{_dev_name}' ({device_id})" if _dev_name else device_id
+
     outcome = await elicit_or_fallback(
         ctx,
-        message=SUSPEND_DEVICE.format(device_id=device_id),
+        message=SUSPEND_DEVICE.format(resource=_dev_resource),
         schema=DeactivateConfirmation,
         auto_confirm_on_fallback=True,
     )
@@ -377,14 +393,22 @@ async def delete_device(ctx: Context, device_id: str) -> dict:
     """
     logger.warning(f"Deletion requested for device: {device_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _, _dev_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/devices/{device_id}")
+        _dev_name = (_dev_obj.get("profile", {}) or {}).get("displayName", "") if isinstance(_dev_obj, dict) else ""
+    except Exception:
+        _dev_name = ""
+    _dev_resource = f"'{_dev_name}' ({device_id})" if _dev_name else device_id
+
     outcome = await elicit_or_fallback(
         ctx,
-        message=DELETE_DEVICE.format(device_id=device_id),
+        message=DELETE_DEVICE.format(resource=_dev_resource),
         schema=DeleteConfirmation,
         fallback_payload={
             "confirmation_required": True,
             "message": (
-                f"To confirm deletion of device {device_id}, please confirm. "
+                f"To confirm deletion of device {_dev_resource}, please confirm. "
                 "The device must already be deactivated. This action cannot be undone."
             ),
             "device_id": device_id,

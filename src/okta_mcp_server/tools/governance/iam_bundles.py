@@ -12,6 +12,7 @@ Covers the Admin Management API (/api/v1/iam/governance/* and
 the IGA Governance Service API (/governance/api/v1/).
 """
 
+import json as _json
 from typing import Optional
 from urllib.parse import urlencode
 
@@ -34,7 +35,14 @@ async def _execute(client, method: str, path: str, body: dict = None):
     response, response_body, error = await request_executor.execute(request)
     if error:
         return None, error
-    return response_body if response_body else None, None
+    if not response_body:
+        return None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response_body, None
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +168,9 @@ async def replace_iam_governance_bundle(
 
     Parameters:
         bundle_id (str, required): The ID of the governance bundle to replace.
-        name (str, required): New name for the governance bundle.
+        name (str, required): Bundle name — must be the EXISTING bundle name.
+            The API does not allow changing the name; passing a different value
+            returns 400 "Bundle name cannot be modified".
         description (str, optional): New description. Omit to clear the existing description.
         entitlements (list, optional): Replacement list of entitlement objects.
             Each entitlement object may contain:
@@ -204,14 +214,22 @@ async def delete_iam_governance_bundle(ctx: Context, bundle_id: str) -> dict:
     """
     logger.warning(f"Deletion requested for IAM governance bundle: {bundle_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _bundle_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/iam/governance/bundles/{bundle_id}")
+        _bundle_name = _bundle_obj.get("name", "") if isinstance(_bundle_obj, dict) else ""
+    except Exception:
+        _bundle_name = ""
+    _bundle_resource = f"'{_bundle_name}' ({bundle_id})" if _bundle_name else bundle_id
+
     outcome = await elicit_or_fallback(
         ctx,
-        message=DELETE_IAM_GOVERNANCE_BUNDLE.format(bundle_id=bundle_id),
+        message=DELETE_IAM_GOVERNANCE_BUNDLE.format(resource=_bundle_resource),
         schema=DeleteConfirmation,
         fallback_payload={
             "confirmation_required": True,
             "message": (
-                f"To confirm deletion of IAM governance bundle {bundle_id}, please confirm. "
+                f"To confirm deletion of IAM governance bundle {_bundle_resource}, please confirm. "
                 "This will remove the bundle and all its entitlement assignments."
             ),
             "bundle_id": bundle_id,

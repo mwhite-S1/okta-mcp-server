@@ -7,6 +7,7 @@
 
 """Governance resource owners tools: list, configure, update, and catalog lookup."""
 
+import json as _json
 from typing import Optional
 from urllib.parse import urlencode
 
@@ -27,7 +28,14 @@ async def _execute(client, method: str, path: str, body: dict = None):
     response, response_body, error = await request_executor.execute(request)
     if error:
         return None, error
-    return response_body if response_body else None, None
+    if not response_body:
+        return None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response_body, None
 
 
 @mcp.tool()
@@ -201,11 +209,13 @@ async def list_resource_owners_catalog(
     Parameters:
         filter (str, required): SCIM filter expression. Supported fields and operators:
             - parentResourceOrn: eq  (required)
-            - resource.type: eq
+            - resource.type: eq      (required — must be combined with parentResourceOrn)
             - resource.profile.name: sw, co  (requires parentResourceOrn + resource.type)
             - resource.profile.parent.id: eq  (for entitlement-values)
+            ⚠ BOTH parentResourceOrn AND resource.type are required. A filter with
+              only parentResourceOrn returns 400.
             Examples:
-              'parentResourceOrn eq "orn:okta:idp:{orgId}:apps:salesforce:{appId}"'
+              'parentResourceOrn eq "orn:..." AND resource.type eq "entitlements"'
               'parentResourceOrn eq "orn:..." AND resource.type eq "entitlement-bundles"'
               'parentResourceOrn eq "orn:..." AND resource.type eq "entitlement-bundles"
                AND resource.profile.name sw "License"'

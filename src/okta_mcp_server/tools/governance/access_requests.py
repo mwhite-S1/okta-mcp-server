@@ -7,6 +7,7 @@
 
 """Access requests tools: catalog, requests, conditions, sequences, settings."""
 
+import json as _json
 from typing import Any, Optional
 from urllib.parse import urlencode
 
@@ -29,7 +30,14 @@ async def _execute(client, method: str, path: str, body: dict = None):
     response, response_body, error = await request_executor.execute(request)
     if error:
         return None, error
-    return response_body if response_body else None, None
+    if not response_body:
+        return None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response_body, None
 
 
 # ---------------------------------------------------------------------------
@@ -352,8 +360,8 @@ async def create_access_request(
         client = await get_okta_client(manager)
 
         payload: dict[str, Any] = {
-            "catalogEntryId": catalog_entry_id,
-            "requesterId": requester_id,
+            "requested": {"entryId": catalog_entry_id, "type": "CATALOG_ENTRY"},
+            "requestedFor": {"externalId": requester_id, "type": "OKTA_USER"},
         }
         if justification:
             payload["justification"] = justification
@@ -386,13 +394,15 @@ async def cancel_access_request(ctx: Context, request_id: str) -> dict:
     """
     logger.info(f"Cancelling access request: {request_id}")
 
+    _cancel_resource = request_id
+
     outcome = await elicit_or_fallback(
         ctx,
-        message=messages.CANCEL_ACCESS_REQUEST.format(request_id=request_id),
+        message=messages.CANCEL_ACCESS_REQUEST.format(resource=_cancel_resource),
         schema=DeleteConfirmation,
         fallback_payload={
             "confirmation_required": True,
-            "message": messages.CANCEL_ACCESS_REQUEST.format(request_id=request_id),
+            "message": messages.CANCEL_ACCESS_REQUEST.format(resource=_cancel_resource),
             "request_id": request_id,
         },
     )
@@ -410,9 +420,8 @@ async def cancel_access_request(ctx: Context, request_id: str) -> dict:
         client = await get_okta_client(manager)
         body, error = await _execute(
             client,
-            "PATCH",
+            "DELETE",
             f"/governance/api/v2/requests/{request_id}",
-            {"status": "CANCELED"},
         )
         if error:
             logger.error(f"Okta API error cancelling access request {request_id}: {error}")
@@ -452,7 +461,7 @@ async def add_request_message(
     try:
         client = await get_okta_client(manager)
 
-        payload: dict[str, Any] = {"body": message_body}
+        payload: dict[str, Any] = {"message": message_body}
         if sender_id:
             payload["senderId"] = sender_id
 
@@ -699,16 +708,18 @@ async def delete_request_condition(
     """
     logger.info(f"Deleting request condition {condition_id} from resource: {resource_id}")
 
+    _condition_resource = condition_id
+
     outcome = await elicit_or_fallback(
         ctx,
         message=messages.DELETE_REQUEST_CONDITION.format(
-            condition_id=condition_id, resource_id=resource_id
+            resource=_condition_resource, resource_id=resource_id
         ),
         schema=DeleteConfirmation,
         fallback_payload={
             "confirmation_required": True,
             "message": messages.DELETE_REQUEST_CONDITION.format(
-                condition_id=condition_id, resource_id=resource_id
+                resource=_condition_resource, resource_id=resource_id
             ),
             "condition_id": condition_id,
             "resource_id": resource_id,
@@ -982,15 +993,18 @@ async def list_request_settings(ctx: Context) -> dict:
 
 @mcp.tool()
 async def update_request_settings(ctx: Context, settings: dict[str, Any]) -> dict:
-    """Update the access request settings for the Okta organization.
+    """Update the access request settings for the Okta organization (PATCH).
 
-    Modifies org-level configuration for access requests such as approval
-    timeouts, escalation settings, and notification preferences.
+    Modifies org-level configuration for access requests. Only the fields
+    provided are updated.
 
     Parameters:
-        settings (dict, required): Settings fields to update. Common fields:
-            - ``approvalTimeout`` (int): Days before a pending request expires.
-            - ``escalationEnabled`` (bool): Whether escalation is enabled.
+        settings (dict, required): Settings fields to update. Supported fields:
+            - ``subprocessorsAcknowledged`` (bool): Indicates that Access
+              Requests provisioning was triggered by the customer (e.g., for
+              Govern Okta admin roles).
+            - ``integrations`` (dict, beta): Integration settings for the org.
+              Shape: {"settings": [{"type": "SLACK", ...}]}
 
     Returns:
         Dictionary containing the updated settings or error information.

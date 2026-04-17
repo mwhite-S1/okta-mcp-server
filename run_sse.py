@@ -72,6 +72,11 @@ from okta_mcp_server.tools.profile_mappings import profile_mappings  # noqa: F40
 from okta_mcp_server.tools.network_zones import network_zones  # noqa: F401
 from okta_mcp_server.tools.trusted_origins import trusted_origins  # noqa: F401
 from okta_mcp_server.tools.schema import schema  # noqa: F401
+from okta_mcp_server.tools.authenticators import authenticators  # noqa: F401
+from okta_mcp_server.tools.applications import application_credentials  # noqa: F401
+from okta_mcp_server.tools.agent_pools import agent_pools  # noqa: F401
+from okta_mcp_server.tools.users import user_role_targets  # noqa: F401
+from okta_mcp_server import resources  # noqa: F401
 
 # Import the mcp instance AFTER all tools are registered
 from okta_mcp_server.server import mcp  # noqa: E402

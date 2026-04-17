@@ -5,6 +5,7 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and limitations under the License.
 
+import json as _json
 from typing import Any, Dict, Optional
 
 from loguru import logger
@@ -13,6 +14,25 @@ from mcp.server.fastmcp import Context
 from okta_mcp_server.server import mcp
 from okta_mcp_server.utils.client import get_okta_client
 from okta_mcp_server.utils.validation import validate_ids
+
+
+async def _execute(client, method: str, path: str, body: dict = None):
+    request_executor = client.get_request_executor()
+    url = f"{client.get_base_url()}{path}"
+    request, error = await request_executor.create_request(method, url, body or {})
+    if error:
+        return None, None, error
+    response, response_body, error = await request_executor.execute(request)
+    if error:
+        return None, None, error
+    if not response_body:
+        return response, None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response, response_body, None
 
 
 @mcp.tool()
@@ -178,13 +198,13 @@ async def update_application_user(
 
     try:
         client = await get_okta_client(manager)
-        user, _, err = await client.update_application_user(app_id, user_id, app_user)
+        _, result, err = await _execute(client, "POST", f"/api/v1/apps/{app_id}/users/{user_id}", app_user)
 
         if err:
             logger.error(f"Error updating user {user_id} in app {app_id}: {err}")
             return {"error": str(err)}
 
-        result = user.to_dict() if hasattr(user, "to_dict") else user
+        result = result if isinstance(result, dict) else {}
         logger.info(f"Updated user {user_id} in app {app_id}")
         return result
 

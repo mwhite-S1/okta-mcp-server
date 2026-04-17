@@ -140,5 +140,10 @@ def main():
     from okta_mcp_server.tools.network_zones import network_zones  # noqa: F401
     from okta_mcp_server.tools.trusted_origins import trusted_origins  # noqa: F401
     from okta_mcp_server.tools.schema import schema  # noqa: F401
+    from okta_mcp_server.tools.authenticators import authenticators  # noqa: F401
+    from okta_mcp_server.tools.applications import application_credentials  # noqa: F401
+    from okta_mcp_server.tools.agent_pools import agent_pools  # noqa: F401
+    from okta_mcp_server.tools.users import user_role_targets  # noqa: F401
+    from okta_mcp_server import resources  # noqa: F401
 
     mcp.run()

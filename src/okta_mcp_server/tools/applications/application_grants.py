@@ -5,6 +5,7 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and limitations under the License.
 
+import json as _json
 from typing import Any, Dict, Optional
 
 from loguru import logger
@@ -13,6 +14,25 @@ from mcp.server.fastmcp import Context
 from okta_mcp_server.server import mcp
 from okta_mcp_server.utils.client import get_okta_client
 from okta_mcp_server.utils.validation import validate_ids
+
+
+async def _execute(client, method: str, path: str, body: dict = None):
+    request_executor = client.get_request_executor()
+    url = f"{client.get_base_url()}{path}"
+    request, error = await request_executor.create_request(method, url, body or {})
+    if error:
+        return None, None, error
+    response, response_body, error = await request_executor.execute(request)
+    if error:
+        return None, None, error
+    if not response_body:
+        return response, None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response, response_body, None
 
 
 @mcp.tool()
@@ -43,13 +63,16 @@ async def list_scope_consent_grants(
         if expand:
             kwargs["expand"] = expand
 
-        grants, _, err = await client.list_scope_consent_grants(app_id, **kwargs)
+        path = f"/api/v1/apps/{app_id}/grants"
+        if expand:
+            path += f"?expand={expand}"
+        _, body, err = await _execute(client, "GET", path)
 
         if err:
             logger.error(f"Error listing grants for app {app_id}: {err}")
             return {"error": str(err)}
 
-        items = [g.to_dict() if hasattr(g, "to_dict") else g for g in (grants or [])]
+        items = body if isinstance(body, list) else []
         logger.info(f"Retrieved {len(items)} grants for app {app_id}")
         return {"items": items, "total_fetched": len(items)}
 
@@ -82,13 +105,13 @@ async def grant_consent_to_scope(
 
     try:
         client = await get_okta_client(manager)
-        result, _, err = await client.grant_consent_to_scope(app_id, grant)
+        _, result, err = await _execute(client, "POST", f"/api/v1/apps/{app_id}/grants", grant)
 
         if err:
             logger.error(f"Error granting scope consent to app {app_id}: {err}")
             return {"error": str(err)}
 
-        out = result.to_dict() if hasattr(result, "to_dict") else result
+        out = result if isinstance(result, dict) else {}
         logger.info(f"Granted scope consent to app {app_id}")
         return out
 

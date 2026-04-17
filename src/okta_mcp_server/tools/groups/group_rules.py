@@ -5,7 +5,10 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and limitations under the License.
 
+import json as _json
+import re
 from typing import Any, Dict, Optional
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from loguru import logger
 from mcp.server.fastmcp import Context
@@ -16,6 +19,40 @@ from okta_mcp_server.utils.elicitation import DeleteConfirmation, elicit_or_fall
 from okta_mcp_server.utils.messages import DELETE_GROUP_RULE
 from okta_mcp_server.utils.serialize import to_dict
 from okta_mcp_server.utils.validation import validate_ids
+
+
+async def _execute(client, method: str, path: str, body: dict = None):
+    request_executor = client.get_request_executor()
+    url = f"{client.get_base_url()}{path}"
+    request, error = await request_executor.create_request(method, url, body or {})
+    if error:
+        return None, None, error
+    response, response_body, error = await request_executor.execute(request)
+    if error:
+        return None, None, error
+    if not response_body:
+        return response, None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response, response_body, None
+
+
+def _parse_next_cursor(response) -> Optional[str]:
+    if response is None:
+        return None
+    try:
+        link = response.headers.get("link") or response.headers.get("Link") or ""
+        match = re.search(r'<([^>]+)>;\s*rel="next"', link)
+        if not match:
+            return None
+        params = parse_qs(urlparse(match.group(1)).query)
+        values = params.get("after", [])
+        return values[0] if values else None
+    except Exception:
+        return None
 
 
 @mcp.tool()
@@ -61,15 +98,17 @@ async def list_group_rules(
         if expand is not None:
             kwargs["expand"] = expand
 
-        rules, _, err = await client.list_group_rules(**kwargs)
+        path = f"/api/v1/groups/rules?{urlencode(kwargs)}" if kwargs else "/api/v1/groups/rules"
+        response, rules, err = await _execute(client, "GET", path)
 
         if err:
             logger.error(f"Okta API error listing group rules: {err}")
             return {"error": str(err)}
 
-        items = [to_dict(r) for r in (rules or [])]
+        items = rules if isinstance(rules, list) else ([rules] if rules else [])
+        next_cursor = _parse_next_cursor(response)
         logger.info(f"Retrieved {len(items)} group rules")
-        return {"items": items, "total_fetched": len(items)}
+        return {"items": items, "total_fetched": len(items), "has_more": next_cursor is not None, "next_cursor": next_cursor}
 
     except Exception as e:
         logger.error(f"Exception listing group rules: {type(e).__name__}: {e}")
@@ -120,13 +159,13 @@ async def create_group_rule(ctx: Context, rule_data: Dict[str, Any]) -> dict:
 
     try:
         client = await get_okta_client(manager)
-        rule, _, err = await client.create_group_rule(rule_data)
+        _, result, err = await _execute(client, "POST", "/api/v1/groups/rules", body=rule_data)
 
         if err:
             logger.error(f"Okta API error creating group rule: {err}")
             return {"error": str(err)}
 
-        result = to_dict(rule)
+        result = result if isinstance(result, dict) else {}
         logger.info(f"Created group rule: {result.get('id', 'unknown')}")
         return result
 
@@ -152,13 +191,13 @@ async def get_group_rule(ctx: Context, group_rule_id: str) -> dict:
 
     try:
         client = await get_okta_client(manager)
-        rule, _, err = await client.get_group_rule(group_rule_id)
+        _, result, err = await _execute(client, "GET", f"/api/v1/groups/rules/{group_rule_id}")
 
         if err:
             logger.error(f"Okta API error getting group rule {group_rule_id}: {err}")
             return {"error": str(err)}
 
-        return to_dict(rule)
+        return result if isinstance(result, dict) else {}
 
     except Exception as e:
         logger.error(f"Exception getting group rule {group_rule_id}: {type(e).__name__}: {e}")
@@ -188,13 +227,13 @@ async def replace_group_rule(ctx: Context, group_rule_id: str, rule_data: Dict[s
 
     try:
         client = await get_okta_client(manager)
-        rule, _, err = await client.replace_group_rule(group_rule_id, rule_data)
+        _, result, err = await _execute(client, "PUT", f"/api/v1/groups/rules/{group_rule_id}", body=rule_data)
 
         if err:
             logger.error(f"Okta API error replacing group rule {group_rule_id}: {err}")
             return {"error": str(err)}
 
-        result = to_dict(rule)
+        result = result if isinstance(result, dict) else {}
         logger.info(f"Replaced group rule: {group_rule_id}")
         return result
 
@@ -226,10 +265,18 @@ async def delete_group_rule(
     """
     logger.warning(f"Deletion requested for group rule {group_rule_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _, _rule_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/groups/rules/{group_rule_id}")
+        _rule_name = _rule_obj.get("name", "") if isinstance(_rule_obj, dict) else ""
+    except Exception:
+        _rule_name = ""
+    _rule_resource = f"'{_rule_name}' ({group_rule_id})" if _rule_name else group_rule_id
+
     fallback_payload = {
         "confirmation_required": True,
         "message": (
-            f"To confirm deletion of group rule {group_rule_id}, please explicitly confirm. "
+            f"To confirm deletion of group rule {_rule_resource}, please explicitly confirm. "
             f"Set remove_users={remove_users} to {'also remove' if remove_users else 'keep'} "
             f"group members assigned by this rule."
         ),
@@ -239,7 +286,7 @@ async def delete_group_rule(
 
     outcome = await elicit_or_fallback(
         ctx,
-        message=DELETE_GROUP_RULE.format(rule_id=group_rule_id),
+        message=DELETE_GROUP_RULE.format(resource=_rule_resource),
         schema=DeleteConfirmation,
         fallback_payload=fallback_payload,
     )

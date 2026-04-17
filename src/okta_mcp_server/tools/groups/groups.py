@@ -237,10 +237,18 @@ async def delete_group(group_id: str, ctx: Context = None) -> list:
     """
     logger.warning(f"Deletion requested for group {group_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _, _grp_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/groups/{group_id}")
+        _grp_name = (_grp_obj.get("profile", {}) or {}).get("name", "") if isinstance(_grp_obj, dict) else ""
+    except Exception:
+        _grp_name = ""
+    _grp_resource = f"'{_grp_name}' ({group_id})" if _grp_name else group_id
+
     fallback_payload = {
         "confirmation_required": True,
         "message": (
-            f"To confirm deletion of group {group_id}, please call the "
+            f"To confirm deletion of group {_grp_resource}, please call the "
             f"'confirm_delete_group' tool with group_id='{group_id}' and "
             f"confirmation='DELETE'."
         ),
@@ -250,7 +258,7 @@ async def delete_group(group_id: str, ctx: Context = None) -> list:
 
     outcome = await elicit_or_fallback(
         ctx,
-        message=DELETE_GROUP.format(group_id=group_id),
+        message=DELETE_GROUP.format(resource=_grp_resource),
         schema=DeleteConfirmation,
         fallback_payload=fallback_payload,
     )

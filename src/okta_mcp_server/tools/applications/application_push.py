@@ -5,7 +5,9 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and limitations under the License.
 
+import json as _json
 from typing import Any, Dict, Optional
+from urllib.parse import urlencode
 
 from loguru import logger
 from mcp.server.fastmcp import Context
@@ -13,6 +15,25 @@ from mcp.server.fastmcp import Context
 from okta_mcp_server.server import mcp
 from okta_mcp_server.utils.client import get_okta_client
 from okta_mcp_server.utils.validation import validate_ids
+
+
+async def _execute(client, method: str, path: str, body=None):
+    request_executor = client.get_request_executor()
+    url = f"{client.get_base_url()}{path}"
+    request, error = await request_executor.create_request(method, url, body if body is not None else {})
+    if error:
+        return None, error
+    response, response_body, error = await request_executor.execute(request)
+    if error:
+        return None, error
+    if not response_body:
+        return None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response_body, None
 
 
 @mcp.tool()
@@ -47,25 +68,29 @@ async def list_group_push_mappings(
 
     try:
         client = await get_okta_client(manager)
-        kwargs = {}
+        params = {}
         if after:
-            kwargs["after"] = after
+            params["after"] = after
         if limit:
-            kwargs["limit"] = limit
+            params["limit"] = limit
         if last_updated:
-            kwargs["last_updated"] = last_updated
+            params["lastUpdated"] = last_updated
         if source_group_id:
-            kwargs["source_group_id"] = source_group_id
+            params["sourceGroupId"] = source_group_id
         if status:
-            kwargs["status"] = status
+            params["status"] = status
 
-        mappings, _, err = await client.list_group_push_mappings(app_id, **kwargs)
+        path = f"/api/v1/apps/{app_id}/group-push/mappings"
+        if params:
+            path += f"?{urlencode(params)}"
+
+        body, err = await _execute(client, "GET", path)
 
         if err:
             logger.error(f"Error listing push mappings for app {app_id}: {err}")
             return {"error": str(err)}
 
-        items = [m.to_dict() if hasattr(m, "to_dict") else m for m in (mappings or [])]
+        items = body if isinstance(body, list) else []
         logger.info(f"Retrieved {len(items)} push mappings for app {app_id}")
         return {"items": items, "total_fetched": len(items)}
 
@@ -104,15 +129,14 @@ async def create_group_push_mapping(
 
     try:
         client = await get_okta_client(manager)
-        result, _, err = await client.create_group_push_mapping(app_id, mapping)
+        body, err = await _execute(client, "POST", f"/api/v1/apps/{app_id}/group-push/mappings", mapping)
 
         if err:
             logger.error(f"Error creating push mapping for app {app_id}: {err}")
             return {"error": str(err)}
 
-        out = result.to_dict() if hasattr(result, "to_dict") else result
-        logger.info(f"Created push mapping for app {app_id}: {out.get('mappingId', 'unknown')}")
-        return out
+        logger.info(f"Created push mapping for app {app_id}")
+        return body or {"message": f"Group push mapping created for app {app_id}"}
 
     except Exception as e:
         logger.error(f"Exception creating push mapping for app {app_id}: {type(e).__name__}: {e}")
@@ -141,13 +165,13 @@ async def get_group_push_mapping(
 
     try:
         client = await get_okta_client(manager)
-        mapping, _, err = await client.get_group_push_mapping(app_id, mapping_id)
+        body, err = await _execute(client, "GET", f"/api/v1/apps/{app_id}/group-push/mappings/{mapping_id}")
 
         if err:
             logger.error(f"Error getting push mapping {mapping_id} for app {app_id}: {err}")
             return {"error": str(err)}
 
-        return mapping.to_dict() if hasattr(mapping, "to_dict") else mapping
+        return body or {}
 
     except Exception as e:
         logger.error(f"Exception getting push mapping {mapping_id} for app {app_id}: {type(e).__name__}: {e}")
@@ -179,15 +203,14 @@ async def update_group_push_mapping(
 
     try:
         client = await get_okta_client(manager)
-        result, _, err = await client.update_group_push_mapping(app_id, mapping_id, update)
+        body, err = await _execute(client, "PATCH", f"/api/v1/apps/{app_id}/group-push/mappings/{mapping_id}", update)
 
         if err:
             logger.error(f"Error updating push mapping {mapping_id} for app {app_id}: {err}")
             return {"error": str(err)}
 
-        out = result.to_dict() if hasattr(result, "to_dict") else result
         logger.info(f"Updated push mapping {mapping_id} for app {app_id}")
-        return out
+        return body or {"message": f"Push mapping {mapping_id} updated"}
 
     except Exception as e:
         logger.error(f"Exception updating push mapping {mapping_id} for app {app_id}: {type(e).__name__}: {e}")
@@ -221,7 +244,8 @@ async def delete_group_push_mapping(
 
     try:
         client = await get_okta_client(manager)
-        _, _, err = await client.delete_group_push_mapping(app_id, mapping_id, delete_target_group=delete_target_group)
+        path = f"/api/v1/apps/{app_id}/group-push/mappings/{mapping_id}?deleteTargetGroup={str(delete_target_group).lower()}"
+        _, err = await _execute(client, "DELETE", path)
 
         if err:
             logger.error(f"Error deleting push mapping {mapping_id} from app {app_id}: {err}")

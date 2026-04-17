@@ -7,6 +7,7 @@
 
 """Governance operations tools: async operation status polling."""
 
+import json as _json
 from loguru import logger
 from mcp.server.fastmcp import Context
 
@@ -24,7 +25,14 @@ async def _execute(client, method: str, path: str, body: dict = None):
     response, response_body, error = await request_executor.execute(request)
     if error:
         return None, error
-    return response_body if response_body else None, None
+    if not response_body:
+        return None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response_body, None
 
 
 @mcp.tool()

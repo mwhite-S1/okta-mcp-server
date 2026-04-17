@@ -21,7 +21,6 @@ from okta_mcp_server.utils.messages import (
     DELETE_POLICY,
     DELETE_POLICY_RULE,
 )
-from okta_mcp_server.utils.serialize import to_dict
 from okta_mcp_server.utils.validation import validate_ids
 
 
@@ -194,13 +193,13 @@ async def create_policy(ctx: Context, policy_data: Dict[str, Any]) -> Optional[D
     okta_client = await get_okta_client(manager)
 
     try:
-        policy, _, err = await okta_client.create_policy(policy_data)
+        _, created, err = await _execute(okta_client, "POST", "/api/v1/policies", body=policy_data)
 
         if err:
             logger.error(f"Error creating policy: {err}")
             return {"error": str(err)}
 
-        return to_dict(policy) if policy else None
+        return created if isinstance(created, dict) else {}
 
     except Exception as e:
         logger.error(f"Exception creating policy: {e}")
@@ -223,13 +222,13 @@ async def update_policy(ctx: Context, policy_id: str, policy_data: Dict[str, Any
     okta_client = await get_okta_client(manager)
 
     try:
-        policy, _, err = await okta_client.update_policy(policy_id, policy_data)
+        _, updated, err = await _execute(okta_client, "PUT", f"/api/v1/policies/{policy_id}", body=policy_data)
 
         if err:
             logger.error(f"Error updating policy {policy_id}: {err}")
             return {"error": str(err)}
 
-        return to_dict(policy) if policy else None
+        return updated if isinstance(updated, dict) else {}
 
     except Exception as e:
         logger.error(f"Exception updating policy: {e}")
@@ -251,9 +250,17 @@ async def delete_policy(ctx: Context, policy_id: str) -> Dict[str, Any]:
     """
     logger.warning(f"Deletion requested for policy {policy_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _, _pol_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/policies/{policy_id}")
+        _pol_name = _pol_obj.get("name", "") if isinstance(_pol_obj, dict) else ""
+    except Exception:
+        _pol_name = ""
+    _pol_resource = f"'{_pol_name}' ({policy_id})" if _pol_name else policy_id
+
     outcome = await elicit_or_fallback(
         ctx,
-        message=DELETE_POLICY.format(policy_id=policy_id),
+        message=DELETE_POLICY.format(resource=_pol_resource),
         schema=DeleteConfirmation,
         auto_confirm_on_fallback=True,
     )
@@ -266,7 +273,7 @@ async def delete_policy(ctx: Context, policy_id: str) -> Dict[str, Any]:
 
     try:
         okta_client = await get_okta_client(manager)
-        _, _, err = await okta_client.delete_policy(policy_id)
+        _, _, err = await _execute(okta_client, "DELETE", f"/api/v1/policies/{policy_id}")
 
         if err:
             logger.error(f"Error deleting policy {policy_id}: {err}")
@@ -294,7 +301,7 @@ async def activate_policy(ctx: Context, policy_id: str) -> Dict[str, Any]:
     okta_client = await get_okta_client(manager)
 
     try:
-        _, err = await okta_client.activate_policy(policy_id)
+        _, _, err = await _execute(okta_client, "POST", f"/api/v1/policies/{policy_id}/lifecycle/activate")
 
         if err:
             logger.error(f"Error activating policy {policy_id}: {err}")
@@ -322,9 +329,17 @@ async def deactivate_policy(ctx: Context, policy_id: str) -> Dict[str, Any]:
     """
     logger.info(f"Deactivation requested for policy {policy_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _, _pol_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/policies/{policy_id}")
+        _pol_name = _pol_obj.get("name", "") if isinstance(_pol_obj, dict) else ""
+    except Exception:
+        _pol_name = ""
+    _pol_resource = f"'{_pol_name}' ({policy_id})" if _pol_name else policy_id
+
     outcome = await elicit_or_fallback(
         ctx,
-        message=DEACTIVATE_POLICY.format(policy_id=policy_id),
+        message=DEACTIVATE_POLICY.format(resource=_pol_resource),
         schema=DeactivateConfirmation,
         auto_confirm_on_fallback=True,
     )
@@ -337,7 +352,7 @@ async def deactivate_policy(ctx: Context, policy_id: str) -> Dict[str, Any]:
 
     try:
         okta_client = await get_okta_client(manager)
-        _, err = await okta_client.deactivate_policy(policy_id)
+        _, _, err = await _execute(okta_client, "POST", f"/api/v1/policies/{policy_id}/lifecycle/deactivate")
 
         if err:
             logger.error(f"Error deactivating policy {policy_id}: {err}")
@@ -439,13 +454,13 @@ async def create_policy_rule(ctx: Context, policy_id: str, rule_data: Dict[str, 
     okta_client = await get_okta_client(manager)
 
     try:
-        rule, _, err = await okta_client.create_policy_rule(policy_id, rule_data)
+        _, created, err = await _execute(okta_client, "POST", f"/api/v1/policies/{policy_id}/rules", body=rule_data)
 
         if err:
             logger.error(f"Error creating policy rule: {err}")
             return {"error": str(err)}
 
-        return to_dict(rule) if rule else None
+        return created if isinstance(created, dict) else {}
 
     except Exception as e:
         logger.error(f"Exception creating policy rule: {e}")
@@ -471,13 +486,13 @@ async def update_policy_rule(
     okta_client = await get_okta_client(manager)
 
     try:
-        rule, _, err = await okta_client.update_policy_rule(policy_id, rule_id, rule_data)
+        _, updated, err = await _execute(okta_client, "PUT", f"/api/v1/policies/{policy_id}/rules/{rule_id}", body=rule_data)
 
         if err:
             logger.error(f"Error updating policy rule: {err}")
             return {"error": str(err)}
 
-        return to_dict(rule) if rule else None
+        return updated if isinstance(updated, dict) else {}
 
     except Exception as e:
         logger.error(f"Exception updating policy rule: {e}")
@@ -500,9 +515,27 @@ async def delete_policy_rule(ctx: Context, policy_id: str, rule_id: str) -> Dict
     """
     logger.warning(f"Deletion requested for policy rule {rule_id} in policy {policy_id}")
 
+    _client_tmp = None
+    _rule_name = ""
+    _pol_name = ""
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _, _rule_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/policies/{policy_id}/rules/{rule_id}")
+        _rule_name = _rule_obj.get("name", "") if isinstance(_rule_obj, dict) else ""
+    except Exception:
+        pass
+    try:
+        if _client_tmp:
+            _, _pol_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/policies/{policy_id}")
+            _pol_name = _pol_obj.get("name", "") if isinstance(_pol_obj, dict) else ""
+    except Exception:
+        pass
+    _rule_resource = f"'{_rule_name}' ({rule_id})" if _rule_name else rule_id
+    _pol_resource = f"'{_pol_name}' ({policy_id})" if _pol_name else policy_id
+
     outcome = await elicit_or_fallback(
         ctx,
-        message=DELETE_POLICY_RULE.format(rule_id=rule_id, policy_id=policy_id),
+        message=DELETE_POLICY_RULE.format(resource=_rule_resource, policy_resource=_pol_resource),
         schema=DeleteConfirmation,
         auto_confirm_on_fallback=True,
     )
@@ -515,7 +548,7 @@ async def delete_policy_rule(ctx: Context, policy_id: str, rule_id: str) -> Dict
 
     try:
         okta_client = await get_okta_client(manager)
-        _, err = await okta_client.delete_policy_rule(policy_id, rule_id)
+        _, _, err = await _execute(okta_client, "DELETE", f"/api/v1/policies/{policy_id}/rules/{rule_id}")
 
         if err:
             logger.error(f"Error deleting policy rule: {err}")
@@ -544,7 +577,7 @@ async def activate_policy_rule(ctx: Context, policy_id: str, rule_id: str) -> Di
     okta_client = await get_okta_client(manager)
 
     try:
-        _, err = await okta_client.activate_policy_rule(policy_id, rule_id)
+        _, _, err = await _execute(okta_client, "POST", f"/api/v1/policies/{policy_id}/rules/{rule_id}/lifecycle/activate")
 
         if err:
             logger.error(f"Error activating policy rule: {err}")
@@ -571,9 +604,27 @@ async def deactivate_policy_rule(ctx: Context, policy_id: str, rule_id: str) -> 
     """
     logger.info(f"Deactivation requested for policy rule {rule_id} in policy {policy_id}")
 
+    _client_tmp = None
+    _rule_name = ""
+    _pol_name = ""
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _, _rule_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/policies/{policy_id}/rules/{rule_id}")
+        _rule_name = _rule_obj.get("name", "") if isinstance(_rule_obj, dict) else ""
+    except Exception:
+        pass
+    try:
+        if _client_tmp:
+            _, _pol_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/policies/{policy_id}")
+            _pol_name = _pol_obj.get("name", "") if isinstance(_pol_obj, dict) else ""
+    except Exception:
+        pass
+    _rule_resource = f"'{_rule_name}' ({rule_id})" if _rule_name else rule_id
+    _pol_resource = f"'{_pol_name}' ({policy_id})" if _pol_name else policy_id
+
     outcome = await elicit_or_fallback(
         ctx,
-        message=DEACTIVATE_POLICY_RULE.format(rule_id=rule_id, policy_id=policy_id),
+        message=DEACTIVATE_POLICY_RULE.format(resource=_rule_resource, policy_resource=_pol_resource),
         schema=DeactivateConfirmation,
         auto_confirm_on_fallback=True,
     )
@@ -586,7 +637,7 @@ async def deactivate_policy_rule(ctx: Context, policy_id: str, rule_id: str) -> 
 
     try:
         okta_client = await get_okta_client(manager)
-        _, err = await okta_client.deactivate_policy_rule(policy_id, rule_id)
+        _, _, err = await _execute(okta_client, "POST", f"/api/v1/policies/{policy_id}/rules/{rule_id}/lifecycle/deactivate")
 
         if err:
             logger.error(f"Error deactivating policy rule: {err}")
@@ -616,12 +667,12 @@ async def clone_policy(ctx: Context, policy_id: str) -> Dict[str, Any]:
     manager = ctx.request_context.lifespan_context.okta_auth_manager
     try:
         okta_client = await get_okta_client(manager)
-        policy, _, err = await okta_client.clone_policy(policy_id)
+        _, cloned, err = await _execute(okta_client, "POST", f"/api/v1/policies/{policy_id}/clone")
         if err:
             logger.error(f"Error cloning policy {policy_id}: {err}")
             return {"error": str(err)}
         logger.info(f"Cloned policy {policy_id} → new policy created")
-        return to_dict(policy) if policy else {}
+        return cloned if isinstance(cloned, dict) else {}
     except Exception as e:
         logger.error(f"Exception cloning policy {policy_id}: {e}")
         return {"error": str(e)}
@@ -656,11 +707,11 @@ async def create_policy_simulation(
     manager = ctx.request_context.lifespan_context.okta_auth_manager
     try:
         okta_client = await get_okta_client(manager)
-        results, _, err = await okta_client.create_policy_simulation(simulation_body)
+        _, results, err = await _execute(okta_client, "POST", "/api/v1/policies/simulate", body=simulation_body)
         if err:
             logger.error(f"Error running policy simulation: {err}")
             return {"error": str(err)}
-        items = [to_dict(r) if r else r for r in (results or [])]
+        items = results if isinstance(results, list) else ([results] if results else [])
         logger.info(f"Policy simulation completed with {len(items)} result(s)")
         return {"items": items, "total_fetched": len(items)}
     except Exception as e:
@@ -685,11 +736,11 @@ async def list_policy_apps(ctx: Context, policy_id: str) -> Dict[str, Any]:
     manager = ctx.request_context.lifespan_context.okta_auth_manager
     try:
         okta_client = await get_okta_client(manager)
-        apps, _, err = await okta_client.list_policy_apps(policy_id)
+        _, apps, err = await _execute(okta_client, "GET", f"/api/v1/policies/{policy_id}/app")
         if err:
             logger.error(f"Error listing apps for policy {policy_id}: {err}")
             return {"error": str(err)}
-        items = [to_dict(a) if a else a for a in (apps or [])]
+        items = apps if isinstance(apps, list) else ([apps] if apps else [])
         logger.info(f"Retrieved {len(items)} app(s) for policy {policy_id}")
         return {"items": items, "total_fetched": len(items)}
     except Exception as e:
@@ -715,11 +766,11 @@ async def list_policy_mappings(ctx: Context, policy_id: str) -> Dict[str, Any]:
     manager = ctx.request_context.lifespan_context.okta_auth_manager
     try:
         okta_client = await get_okta_client(manager)
-        mappings, _, err = await okta_client.list_policy_mappings(policy_id)
+        _, mappings, err = await _execute(okta_client, "GET", f"/api/v1/policies/{policy_id}/mappings")
         if err:
             logger.error(f"Error listing mappings for policy {policy_id}: {err}")
             return {"error": str(err)}
-        items = [to_dict(m) if m else m for m in (mappings or [])]
+        items = mappings if isinstance(mappings, list) else ([mappings] if mappings else [])
         logger.info(f"Retrieved {len(items)} mapping(s) for policy {policy_id}")
         return {"items": items, "total_fetched": len(items)}
     except Exception as e:
@@ -754,12 +805,12 @@ async def map_resource_to_policy(
     try:
         okta_client = await get_okta_client(manager)
         body = {"resourceId": resource_id, "resourceType": resource_type}
-        mapping, _, err = await okta_client.map_resource_to_policy(policy_id, body)
+        _, mapping, err = await _execute(okta_client, "POST", f"/api/v1/policies/{policy_id}/mappings", body=body)
         if err:
             logger.error(f"Error mapping resource to policy {policy_id}: {err}")
             return {"error": str(err)}
         logger.info(f"Mapped resource {resource_id} to policy {policy_id}")
-        return to_dict(mapping) if mapping else {}
+        return mapping if isinstance(mapping, dict) else {}
     except Exception as e:
         logger.error(f"Exception mapping resource to policy {policy_id}: {e}")
         return {"error": str(e)}
@@ -785,11 +836,11 @@ async def get_policy_mapping(
     manager = ctx.request_context.lifespan_context.okta_auth_manager
     try:
         okta_client = await get_okta_client(manager)
-        mapping, _, err = await okta_client.get_policy_mapping(policy_id, mapping_id)
+        _, mapping, err = await _execute(okta_client, "GET", f"/api/v1/policies/{policy_id}/mappings/{mapping_id}")
         if err:
             logger.error(f"Error getting mapping {mapping_id} for policy {policy_id}: {err}")
             return {"error": str(err)}
-        return to_dict(mapping) if mapping else {}
+        return mapping if isinstance(mapping, dict) else {}
     except Exception as e:
         logger.error(f"Exception getting policy mapping: {e}")
         return {"error": str(e)}
@@ -817,7 +868,7 @@ async def delete_policy_resource_mapping(
     manager = ctx.request_context.lifespan_context.okta_auth_manager
     try:
         okta_client = await get_okta_client(manager)
-        _, _, err = await okta_client.delete_policy_resource_mapping(policy_id, mapping_id)
+        _, _, err = await _execute(okta_client, "DELETE", f"/api/v1/policies/{policy_id}/mappings/{mapping_id}")
         if err:
             logger.error(f"Error deleting mapping {mapping_id} from policy {policy_id}: {err}")
             return {"error": str(err)}

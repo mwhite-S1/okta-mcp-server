@@ -5,7 +5,10 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and limitations under the License.
 
+import json as _json
+import re
 from typing import Dict, List, Optional
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from loguru import logger
 from mcp.server.fastmcp import Context
@@ -15,6 +18,40 @@ from okta_mcp_server.utils.client import get_okta_client
 from okta_mcp_server.utils.elicitation import DeleteConfirmation, elicit_or_fallback
 from okta_mcp_server.utils.messages import DELETE_TRUSTED_ORIGIN
 from okta_mcp_server.utils.validation import validate_ids
+
+
+async def _execute(client, method: str, path: str, body: dict = None):
+    request_executor = client.get_request_executor()
+    url = f"{client.get_base_url()}{path}"
+    request, error = await request_executor.create_request(method, url, body or {})
+    if error:
+        return None, None, error
+    response, response_body, error = await request_executor.execute(request)
+    if error:
+        return None, None, error
+    if not response_body:
+        return response, None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response, response_body, None
+
+
+def _parse_next_cursor(response) -> Optional[str]:
+    if response is None:
+        return None
+    try:
+        link = response.headers.get("link") or response.headers.get("Link") or ""
+        match = re.search(r'<([^>]+)>;\s*rel="next"', link)
+        if not match:
+            return None
+        params = parse_qs(urlparse(match.group(1)).query)
+        values = params.get("after", [])
+        return values[0] if values else None
+    except Exception:
+        return None
 
 
 @mcp.tool()
@@ -55,15 +92,17 @@ async def list_trusted_origins(
         if limit:
             kwargs["limit"] = limit
 
-        origins, _, err = await client.list_origins(**kwargs)
+        path = f"/api/v1/trustedOrigins?{urlencode(kwargs)}" if kwargs else "/api/v1/trustedOrigins"
+        response, origins, err = await _execute(client, "GET", path)
 
         if err:
             logger.error(f"Error listing trusted origins: {err}")
             return {"error": str(err)}
 
-        items = [o.to_dict() if hasattr(o, "to_dict") else o for o in (origins or [])]
+        items = origins if isinstance(origins, list) else ([origins] if origins else [])
+        next_cursor = _parse_next_cursor(response)
         logger.info(f"Retrieved {len(items)} trusted origin(s)")
-        return {"items": items, "total_fetched": len(items)}
+        return {"items": items, "total_fetched": len(items), "has_more": next_cursor is not None, "next_cursor": next_cursor}
 
     except Exception as e:
         logger.error(f"Exception listing trusted origins: {type(e).__name__}: {e}")
@@ -103,13 +142,13 @@ async def create_trusted_origin(
             "origin": origin,
             "scopes": scopes,
         }
-        created, _, err = await client.create_origin(body)
+        _, created, err = await _execute(client, "POST", "/api/v1/trustedOrigins", body=body)
 
         if err:
             logger.error(f"Error creating trusted origin: {err}")
             return {"error": str(err)}
 
-        result = created.to_dict() if hasattr(created, "to_dict") else created
+        result = created if isinstance(created, dict) else {}
         logger.info(f"Created trusted origin: {result.get('id', 'unknown')}")
         return result
 
@@ -138,13 +177,13 @@ async def get_trusted_origin(
 
     try:
         client = await get_okta_client(manager)
-        origin, _, err = await client.get_origin(origin_id)
+        _, origin, err = await _execute(client, "GET", f"/api/v1/trustedOrigins/{origin_id}")
 
         if err:
             logger.error(f"Error getting trusted origin {origin_id}: {err}")
             return {"error": str(err)}
 
-        return origin.to_dict() if hasattr(origin, "to_dict") else origin
+        return origin if isinstance(origin, dict) else {}
 
     except Exception as e:
         logger.error(f"Exception getting trusted origin {origin_id}: {type(e).__name__}: {e}")
@@ -184,13 +223,13 @@ async def replace_trusted_origin(
             "origin": origin,
             "scopes": scopes,
         }
-        updated, _, err = await client.replace_origin(origin_id, body)
+        _, updated, err = await _execute(client, "PUT", f"/api/v1/trustedOrigins/{origin_id}", body=body)
 
         if err:
             logger.error(f"Error replacing trusted origin {origin_id}: {err}")
             return {"error": str(err)}
 
-        result = updated.to_dict() if hasattr(updated, "to_dict") else updated
+        result = updated if isinstance(updated, dict) else {}
         logger.info(f"Replaced trusted origin {origin_id}")
         return result
 
@@ -218,10 +257,18 @@ async def delete_trusted_origin(
     """
     logger.warning(f"Deletion requested for trusted origin {origin_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _, _origin_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/trustedOrigins/{origin_id}")
+        _origin_name = _origin_obj.get("name", "") if isinstance(_origin_obj, dict) else ""
+    except Exception:
+        _origin_name = ""
+    _origin_resource = f"'{_origin_name}' ({origin_id})" if _origin_name else origin_id
+
     fallback_payload = {
         "confirmation_required": True,
         "message": (
-            f"To confirm deleting trusted origin {origin_id}, please explicitly confirm. "
+            f"To confirm deleting trusted origin {_origin_resource}, please explicitly confirm. "
             "This may break CORS or iFrame embedding for the affected origin."
         ),
         "origin_id": origin_id,
@@ -229,7 +276,7 @@ async def delete_trusted_origin(
 
     outcome = await elicit_or_fallback(
         ctx,
-        message=DELETE_TRUSTED_ORIGIN.format(origin_id=origin_id),
+        message=DELETE_TRUSTED_ORIGIN.format(resource=_origin_resource),
         schema=DeleteConfirmation,
         fallback_payload=fallback_payload,
     )
@@ -246,7 +293,7 @@ async def delete_trusted_origin(
 
     try:
         client = await get_okta_client(manager)
-        _, _, err = await client.delete_origin(origin_id)
+        _, _, err = await _execute(client, "DELETE", f"/api/v1/trustedOrigins/{origin_id}")
 
         if err:
             logger.error(f"Error deleting trusted origin {origin_id}: {err}")
@@ -280,13 +327,13 @@ async def activate_trusted_origin(
 
     try:
         client = await get_okta_client(manager)
-        origin, _, err = await client.activate_origin(origin_id)
+        _, origin, err = await _execute(client, "POST", f"/api/v1/trustedOrigins/{origin_id}/lifecycle/activate")
 
         if err:
             logger.error(f"Error activating trusted origin {origin_id}: {err}")
             return {"error": str(err)}
 
-        result = origin.to_dict() if hasattr(origin, "to_dict") else origin
+        result = origin if isinstance(origin, dict) else {}
         logger.info(f"Activated trusted origin {origin_id}")
         return result
 
@@ -317,13 +364,13 @@ async def deactivate_trusted_origin(
 
     try:
         client = await get_okta_client(manager)
-        origin, _, err = await client.deactivate_origin(origin_id)
+        _, origin, err = await _execute(client, "POST", f"/api/v1/trustedOrigins/{origin_id}/lifecycle/deactivate")
 
         if err:
             logger.error(f"Error deactivating trusted origin {origin_id}: {err}")
             return {"error": str(err)}
 
-        result = origin.to_dict() if hasattr(origin, "to_dict") else origin
+        result = origin if isinstance(origin, dict) else {}
         logger.info(f"Deactivated trusted origin {origin_id}")
         return result
 

@@ -248,10 +248,18 @@ async def delete_network_zone(
     """
     logger.warning(f"Deletion requested for network zone {zone_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _, _zone_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/zones/{zone_id}")
+        _zone_name = _zone_obj.get("name", "") if isinstance(_zone_obj, dict) else ""
+    except Exception:
+        _zone_name = ""
+    _zone_resource = f"'{_zone_name}' ({zone_id})" if _zone_name else zone_id
+
     fallback_payload = {
         "confirmation_required": True,
         "message": (
-            f"To confirm deleting network zone {zone_id}, please explicitly confirm. "
+            f"To confirm deleting network zone {_zone_resource}, please explicitly confirm. "
             "Any policies referencing this zone will be affected."
         ),
         "zone_id": zone_id,
@@ -259,7 +267,7 @@ async def delete_network_zone(
 
     outcome = await elicit_or_fallback(
         ctx,
-        message=DELETE_NETWORK_ZONE.format(zone_id=zone_id),
+        message=DELETE_NETWORK_ZONE.format(resource=_zone_resource),
         schema=DeleteConfirmation,
         fallback_payload=fallback_payload,
     )

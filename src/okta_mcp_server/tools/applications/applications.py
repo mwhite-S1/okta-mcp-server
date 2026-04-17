@@ -259,14 +259,14 @@ async def update_application(ctx: Context, app_id: str, app_config: Dict[str, An
         client = await get_okta_client(manager)
 
         logger.debug(f"Calling Okta API to update application {app_id}")
-        app, _, err = await client.update_application(app_id, app_config)
+        _, app, err = await _execute(client, "PUT", f"/api/v1/apps/{app_id}", app_config, keep_empty_params=True)
 
         if err:
             logger.error(f"Okta API error while updating application {app_id}: {err}")
             return {"error": str(err)}
 
         logger.info(f"Successfully updated application: {app_id}")
-        return to_dict(app)
+        return app if isinstance(app, dict) else to_dict(app)
     except Exception as e:
         logger.error(f"Exception while updating application {app_id}: {type(e).__name__}: {e}")
         return {"error": str(e)}
@@ -288,10 +288,18 @@ async def delete_application(ctx: Context, app_id: str) -> list:
     """
     logger.warning(f"Deletion requested for application {app_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _, _app_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/apps/{app_id}")
+        _app_name = _app_obj.get("label", "") if isinstance(_app_obj, dict) else ""
+    except Exception:
+        _app_name = ""
+    _app_resource = f"'{_app_name}' ({app_id})" if _app_name else app_id
+
     fallback_payload = {
         "confirmation_required": True,
         "message": (
-            f"To confirm deletion of application {app_id}, please call the "
+            f"To confirm deletion of application {_app_resource}, please call the "
             f"'confirm_delete_application' tool with app_id='{app_id}' and "
             f"confirmation='DELETE'."
         ),
@@ -301,7 +309,7 @@ async def delete_application(ctx: Context, app_id: str) -> list:
 
     outcome = await elicit_or_fallback(
         ctx,
-        message=DELETE_APPLICATION.format(app_id=app_id),
+        message=DELETE_APPLICATION.format(resource=_app_resource),
         schema=DeleteConfirmation,
         fallback_payload=fallback_payload,
     )
@@ -320,7 +328,7 @@ async def delete_application(ctx: Context, app_id: str) -> list:
         client = await get_okta_client(manager)
         logger.debug(f"Calling Okta API to delete application {app_id}")
 
-        _, err = await client.delete_application(app_id)
+        _, _, err = await client.delete_application(app_id)
 
         if err:
             logger.error(f"Okta API error while deleting application {app_id}: {err}")
@@ -365,7 +373,7 @@ async def confirm_delete_application(ctx: Context, app_id: str, confirmation: st
         client = await get_okta_client(manager)
         logger.debug(f"Calling Okta API to delete application {app_id}")
 
-        _, err = await client.delete_application(app_id)
+        _, _, err = await client.delete_application(app_id)
 
         if err:
             logger.error(f"Okta API error while deleting application {app_id}: {err}")
@@ -397,7 +405,7 @@ async def activate_application(ctx: Context, app_id: str) -> list:
         client = await get_okta_client(manager)
         logger.debug(f"Calling Okta API to activate application {app_id}")
 
-        _, err = await client.activate_application(app_id)
+        _, _, err = await client.activate_application(app_id)
 
         if err:
             logger.error(f"Okta API error while activating application {app_id}: {err}")
@@ -423,9 +431,17 @@ async def deactivate_application(ctx: Context, app_id: str) -> list:
     """
     logger.info(f"Deactivation requested for application: {app_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _, _app_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/apps/{app_id}")
+        _app_name = _app_obj.get("label", "") if isinstance(_app_obj, dict) else ""
+    except Exception:
+        _app_name = ""
+    _app_resource = f"'{_app_name}' ({app_id})" if _app_name else app_id
+
     outcome = await elicit_or_fallback(
         ctx,
-        message=DEACTIVATE_APPLICATION.format(app_id=app_id),
+        message=DEACTIVATE_APPLICATION.format(resource=_app_resource),
         schema=DeactivateConfirmation,
         auto_confirm_on_fallback=True,
     )
@@ -440,7 +456,7 @@ async def deactivate_application(ctx: Context, app_id: str) -> list:
         client = await get_okta_client(manager)
         logger.debug(f"Calling Okta API to deactivate application {app_id}")
 
-        _, err = await client.deactivate_application(app_id)
+        _, _, err = await client.deactivate_application(app_id)
 
         if err:
             logger.error(f"Okta API error while deactivating application {app_id}: {err}")

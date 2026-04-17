@@ -5,7 +5,10 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and limitations under the License.
 
+import json as _json
+import re
 from typing import Any, Dict, Optional
+from urllib.parse import urlencode
 
 from loguru import logger
 from mcp.server.fastmcp import Context
@@ -13,6 +16,25 @@ from mcp.server.fastmcp import Context
 from okta_mcp_server.server import mcp
 from okta_mcp_server.utils.client import get_okta_client
 from okta_mcp_server.utils.validation import validate_ids
+
+
+async def _execute(client, method: str, path: str, body=None):
+    request_executor = client.get_request_executor()
+    url = f"{client.get_base_url()}{path}"
+    request, error = await request_executor.create_request(method, url, body or {})
+    if error:
+        return None, None, error
+    response, response_body, error = await request_executor.execute(request)
+    if error:
+        return None, None, error
+    if not response_body:
+        return response, None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response, response_body, None
 
 
 @mcp.tool()
@@ -43,23 +65,24 @@ async def list_profile_mappings(
 
     try:
         client = await get_okta_client(manager)
-        kwargs = {}
+        params = {}
         if after is not None:
-            kwargs["after"] = after
+            params["after"] = after
         if limit is not None:
-            kwargs["limit"] = limit
+            params["limit"] = limit
         if source_id is not None:
-            kwargs["sourceId"] = source_id
+            params["sourceId"] = source_id
         if target_id is not None:
-            kwargs["targetId"] = target_id
+            params["targetId"] = target_id
 
-        mappings, _, err = await client.list_profile_mappings(**kwargs)
+        path = f"/api/v1/mappings?{urlencode(params)}" if params else "/api/v1/mappings"
+        _, mappings, err = await _execute(client, "GET", path)
 
         if err:
             logger.error(f"Error listing profile mappings: {err}")
             return {"error": str(err)}
 
-        items = [m.to_dict() if hasattr(m, "to_dict") else m for m in (mappings or [])]
+        items = mappings if isinstance(mappings, list) else ([mappings] if mappings else [])
         logger.info(f"Retrieved {len(items)} profile mapping(s)")
         return {"items": items, "total_fetched": len(items)}
 
@@ -92,13 +115,13 @@ async def get_profile_mapping(
 
     try:
         client = await get_okta_client(manager)
-        mapping, _, err = await client.get_profile_mapping(mapping_id)
+        _, mapping, err = await _execute(client, "GET", f"/api/v1/mappings/{mapping_id}")
 
         if err:
             logger.error(f"Error getting profile mapping {mapping_id}: {err}")
             return {"error": str(err)}
 
-        return mapping.to_dict() if hasattr(mapping, "to_dict") else mapping
+        return mapping if isinstance(mapping, dict) else {}
 
     except Exception as e:
         logger.error(f"Exception getting profile mapping {mapping_id}: {type(e).__name__}: {e}")
@@ -139,13 +162,13 @@ async def update_profile_mapping(
     try:
         client = await get_okta_client(manager)
         body = {"properties": properties}
-        mapping, _, err = await client.update_profile_mapping(mapping_id, body)
+        _, updated, err = await _execute(client, "POST", f"/api/v1/mappings/{mapping_id}", body=body)
 
         if err:
             logger.error(f"Error updating profile mapping {mapping_id}: {err}")
             return {"error": str(err)}
 
-        out = mapping.to_dict() if hasattr(mapping, "to_dict") else mapping
+        out = updated if isinstance(updated, dict) else {}
         logger.info(f"Updated profile mapping {mapping_id}")
         return out
 

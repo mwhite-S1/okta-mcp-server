@@ -7,6 +7,7 @@
 
 """Governance v1 request-types tools: create, list, publish, and manage request types."""
 
+import json as _json
 from typing import Any, Optional
 from urllib.parse import urlencode
 
@@ -27,7 +28,14 @@ async def _execute(client, method: str, path: str, body: dict = None):
     response, response_body, error = await request_executor.execute(request)
     if error:
         return None, error
-    return response_body if response_body else None, None
+    if not response_body:
+        return None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response_body, None
 
 
 # ---------------------------------------------------------------------------
@@ -37,6 +45,7 @@ async def _execute(client, method: str, path: str, body: dict = None):
 @mcp.tool()
 async def list_governance_teams(
     ctx: Context,
+    filter: Optional[str] = None,
     after: Optional[str] = None,
     limit: Optional[int] = None,
 ) -> dict:
@@ -46,8 +55,11 @@ async def list_governance_teams(
     (ownerId) is required when creating a request type.
 
     Parameters:
+        filter (str, optional): Filter expression using supported team properties.
+            Note: Query parameter percent encoding is required.
+            Example: 'name eq "My Team"'
         after (str, optional): Pagination cursor for the next page of results.
-        limit (int, optional): Maximum number of teams to return per page.
+        limit (int, optional): Maximum number of teams to return per page (1-200).
 
     Returns:
         Dictionary containing team objects and pagination info.
@@ -59,6 +71,8 @@ async def list_governance_teams(
         client = await get_okta_client(manager)
 
         params = {}
+        if filter:
+            params["filter"] = filter
         if after:
             params["after"] = after
         if limit:
@@ -88,8 +102,10 @@ async def list_governance_teams(
 @mcp.tool()
 async def list_request_types(
     ctx: Context,
+    filter: Optional[str] = None,
     after: Optional[str] = None,
     limit: Optional[int] = None,
+    order_by: Optional[str] = None,
 ) -> dict:
     """List all v1 request types in the Okta organization.
 
@@ -98,8 +114,15 @@ async def list_request_types(
     request configuration.
 
     Parameters:
+        filter (str, optional): Filter expression using supported request type
+            properties. Note: Query parameter percent encoding is required.
+            Example: 'status eq "ACTIVE"'
         after (str, optional): Pagination cursor for the next page of results.
-        limit (int, optional): Maximum number of request types per page.
+        limit (int, optional): Maximum number of request types per page (1-200).
+        order_by (str, optional): Order results by a request type property name
+            with ``%20asc`` or ``%20desc`` suffix.
+            Note: Query parameter percent encoding is required.
+            Example: "name%20asc"
 
     Returns:
         Dictionary containing request type objects and pagination info.
@@ -111,10 +134,14 @@ async def list_request_types(
         client = await get_okta_client(manager)
 
         params = {}
+        if filter:
+            params["filter"] = filter
         if after:
             params["after"] = after
         if limit:
             params["limit"] = limit
+        if order_by:
+            params["orderBy"] = order_by
 
         path = "/governance/api/v1/request-types"
         if params:

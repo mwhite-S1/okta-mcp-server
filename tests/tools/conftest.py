@@ -179,3 +179,57 @@ def first_network_zone_id(real_ctx):
         pytest.skip("No network zones found in org")
     zone = items[0]
     return zone.get("id") if isinstance(zone, dict) else zone.id
+
+
+@pytest.fixture(scope="session")
+def first_authenticator_id(real_ctx):
+    """ID of the first authenticator in the org."""
+    from okta_mcp_server.tools.authenticators.authenticators import list_authenticators
+    result = asyncio.run(list_authenticators(ctx=real_ctx))
+    items = result.get("items", []) if isinstance(result, dict) else []
+    if not items:
+        pytest.skip("No authenticators found in org")
+    return items[0].get("id") if isinstance(items[0], dict) else items[0].id
+
+
+@pytest.fixture(scope="session")
+def first_agent_pool_id(real_ctx):
+    """ID of the first agent pool in the org (skips if none exist)."""
+    from okta_mcp_server.tools.agent_pools.agent_pools import list_agent_pools
+    result = asyncio.run(list_agent_pools(ctx=real_ctx))
+    items = result.get("items", []) if isinstance(result, dict) else []
+    if not items:
+        pytest.skip("No agent pools found in org — AD/LDAP not configured")
+    return items[0].get("id") if isinstance(items[0], dict) else items[0].id
+
+
+@pytest.fixture(scope="session")
+def first_user_with_role(real_ctx):
+    """Returns (user_id, role_assignment_id) for the first user that has an admin role.
+
+    Finds the first ACTIVE user and checks if they have any role assignments.
+    Skips if no users with role assignments exist.
+    """
+    from okta_mcp_server.utils.client import get_okta_client
+
+    async def _find():
+        manager = real_ctx.request_context.lifespan_context.okta_auth_manager
+        client = await get_okta_client(manager)
+        # Fetch a handful of users and check for role assignments
+        users, _, err = await client.list_users({"filter": 'status eq "ACTIVE"', "limit": "10"})
+        if err or not users:
+            return None, None
+        for user in users:
+            uid = user.id if hasattr(user, "id") else user.get("id")
+            roles, _, rerr = await client.list_assigned_roles_for_user(uid, {})
+            if rerr or not roles:
+                continue
+            role = roles[0]
+            rid = role.id if hasattr(role, "id") else role.get("id")
+            return uid, rid
+        return None, None
+
+    uid, rid = asyncio.run(_find())
+    if not uid or not rid:
+        pytest.skip("No users with admin role assignments found in org")
+    return uid, rid

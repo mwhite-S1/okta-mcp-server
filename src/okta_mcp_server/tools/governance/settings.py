@@ -7,6 +7,7 @@
 
 """Governance settings tools: org settings, integrations, certification settings, entitlement settings."""
 
+import json as _json
 from typing import Optional
 from urllib.parse import quote, urlencode
 
@@ -27,7 +28,14 @@ async def _execute(client, method: str, path: str, body: dict = None):
     response, response_body, error = await request_executor.execute(request)
     if error:
         return None, error
-    return response_body if response_body else None, None
+    if not response_body:
+        return None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response_body, None
 
 
 # ---------------------------------------------------------------------------
@@ -36,24 +44,28 @@ async def _execute(client, method: str, path: str, body: dict = None):
 
 
 @mcp.tool()
-async def update_org_governance_settings(ctx: Context, operations: list) -> dict:
-    """Update the org-level governance settings using JSON Patch operations.
+async def update_org_governance_settings(ctx: Context, settings: dict) -> dict:
+    """Update the org-level governance settings (merge-patch object).
 
-    Applies one or more patch operations to the org governance settings resource
-    at /governance/api/v1/settings. Use this to enable or disable governance
-    features, adjust org-wide defaults, and configure delegation rules.
+    Applies a partial update to the org governance settings at
+    /governance/api/v1/settings. Only the fields provided are updated.
 
     Parameters:
-        operations (list, required): A list of JSON Patch operation objects.
-            Each operation must include:
-              - op (str): The operation type — "add", "remove", or "replace".
-              - path (str): The JSON Pointer path to the field being patched.
-              - value (any, optional): The new value for "add" or "replace" ops.
+        settings (dict, required): Settings object to merge-patch. Supported fields:
+            - delegates (dict): Delegation settings.
+                - enduser (dict): End-user delegation controls.
+                    - permissions (list): Allowed operations for end users.
+                        Enum values: "READ" (view delegates), "WRITE" (set delegates).
+                        Example: ["READ", "WRITE"]
+                    - onlyFor (list): Restricts which users can be set as delegates.
+                        Empty list = any user can be a delegate.
+            - governanceAI (dict): Governance AI settings.
+                - securityAccessReview (dict):
+                    - enabled (bool): Enable AI-powered insights for access reviews.
 
     Example:
-        operations=[
-            {"op": "replace", "path": "/delegationEnabled", "value": True}
-        ]
+        settings={"governanceAI": {"securityAccessReview": {"enabled": True}}}
+        settings={"delegates": {"enduser": {"permissions": ["READ", "WRITE"]}}}
 
     Returns:
         Dictionary containing the updated org governance settings or error info.
@@ -63,7 +75,7 @@ async def update_org_governance_settings(ctx: Context, operations: list) -> dict
 
     try:
         client = await get_okta_client(manager)
-        body, error = await _execute(client, "PATCH", "/governance/api/v1/settings", operations)
+        body, error = await _execute(client, "PATCH", "/governance/api/v1/settings", settings)
         if error:
             logger.error(f"Okta API error updating org governance settings: {error}")
             return {"error": str(error)}
@@ -228,24 +240,20 @@ async def get_certification_settings(ctx: Context) -> dict:
 
 
 @mcp.tool()
-async def update_certification_settings(ctx: Context, operations: list) -> dict:
-    """Update the org-level access certification settings using JSON Patch operations.
+async def update_certification_settings(ctx: Context, settings: dict) -> dict:
+    """Update the org-level access certification settings (merge-patch object).
 
-    Applies one or more patch operations to the certification settings resource
-    at /governance/api/v1/settings/certification. Use this to change reviewer
-    fallback rules, self-certification policies, and other campaign defaults.
+    Applies a partial update to the certification settings at
+    /governance/api/v1/settings/certification. Only the fields provided are updated.
 
     Parameters:
-        operations (list, required): A list of JSON Patch operation objects.
-            Each operation must include:
-              - op (str): The operation type — "add", "remove", or "replace".
-              - path (str): The JSON Pointer path to the field being patched.
-              - value (any, optional): The new value for "add" or "replace" ops.
+        settings (dict, required): Settings object to merge-patch. Supported fields:
+            - integrations (dict): Access certification integration settings.
+                - settings (list): List of integration configuration objects.
+                    Each item is an integration-specific settings object.
 
     Example:
-        operations=[
-            {"op": "replace", "path": "/selfCertificationAllowed", "value": False}
-        ]
+        settings={"integrations": {"settings": [{"type": "SLACK", ...}]}}
 
     Returns:
         Dictionary containing the updated certification settings or error info.
@@ -256,7 +264,7 @@ async def update_certification_settings(ctx: Context, operations: list) -> dict:
     try:
         client = await get_okta_client(manager)
         body, error = await _execute(
-            client, "PATCH", "/governance/api/v1/settings/certification", operations
+            client, "PATCH", "/governance/api/v1/settings/certification", settings
         )
         if error:
             logger.error(f"Okta API error updating certification settings: {error}")
@@ -316,28 +324,23 @@ async def get_resource_entitlement_settings(ctx: Context, resource_orn: str) -> 
 async def update_resource_entitlement_settings(
     ctx: Context,
     resource_orn: str,
-    operations: list,
+    settings: dict,
 ) -> dict:
-    """Update the entitlement settings for a specific governance resource using JSON Patch.
+    """Update the entitlement settings for a specific governance resource.
 
-    Applies one or more patch operations to the entitlement settings for the
-    resource identified by its Okta Resource Name (ORN). Use this to control
-    entitlement discovery, catalog visibility, and governance behavior at the
-    resource level.
+    Applies a partial update to the entitlement settings for the resource
+    identified by its Okta Resource Name (ORN). Use this to opt a resource
+    in or out of governance entitlement management.
 
     Parameters:
         resource_orn (str, required): The Okta Resource Name (ORN) of the resource.
-            Example: "orn:okta:idp:org123:apps:0oa456..."
-        operations (list, required): A list of JSON Patch operation objects.
-            Each operation must include:
-              - op (str): The operation type — "add", "remove", or "replace".
-              - path (str): The JSON Pointer path to the field being patched.
-              - value (any, optional): The new value for "add" or "replace" ops.
+            Example: "orn:oktapreview:idp:00o1e0scx8qAmdRrp1d7:apps:saasure:0oa1e0scxcfZCJlXB1d7"
+        settings (dict, required): Settings fields to update. Supported fields:
+            - status (str): "OPTED_IN" or "OPTED_OUT"
+            - entitlementDiscoveryEnabled (bool): Whether entitlement discovery is on.
 
     Example:
-        operations=[
-            {"op": "replace", "path": "/entitlementDiscoveryEnabled", "value": True}
-        ]
+        settings={"status": "OPTED_OUT"}
 
     Returns:
         Dictionary containing the updated entitlement settings or error info.
@@ -350,7 +353,7 @@ async def update_resource_entitlement_settings(
         encoded_orn = quote(resource_orn, safe="")
         path = f"/governance/api/v2/resources/{encoded_orn}/entitlement-settings"
 
-        body, error = await _execute(client, "PATCH", path, operations)
+        body, error = await _execute(client, "PATCH", path, settings)
         if error:
             logger.error(f"Okta API error updating entitlement settings for {resource_orn}: {error}")
             return {"error": str(error)}

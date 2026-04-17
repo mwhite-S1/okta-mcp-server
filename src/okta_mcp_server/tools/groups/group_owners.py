@@ -5,6 +5,7 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and limitations under the License.
 
+import json as _json
 from typing import Any, Dict, Optional
 
 from loguru import logger
@@ -14,6 +15,25 @@ from okta_mcp_server.server import mcp
 from okta_mcp_server.utils.client import get_okta_client
 from okta_mcp_server.utils.elicitation import DeleteConfirmation, elicit_or_fallback
 from okta_mcp_server.utils.validation import validate_ids
+
+
+async def _execute(client, method: str, path: str, body: dict = None):
+    request_executor = client.get_request_executor()
+    url = f"{client.get_base_url()}{path}"
+    request, error = await request_executor.create_request(method, url, body or {})
+    if error:
+        return None, None, error
+    response, response_body, error = await request_executor.execute(request)
+    if error:
+        return None, None, error
+    if not response_body:
+        return response, None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response, response_body, None
 
 
 @mcp.tool()
@@ -95,13 +115,13 @@ async def assign_group_owner(
 
     try:
         client = await get_okta_client(manager)
-        result, _, err = await client.assign_group_owner(group_id, owner)
+        _, body, err = await _execute(client, "POST", f"/api/v1/groups/{group_id}/owners", body=owner)
 
         if err:
             logger.error(f"Error assigning owner to group {group_id}: {err}")
             return {"error": str(err)}
 
-        out = result.to_dict() if hasattr(result, "to_dict") else result
+        out = body if isinstance(body, dict) else {}
         logger.info(f"Assigned owner {owner.get('id', 'unknown')} to group {group_id}")
         return out
 

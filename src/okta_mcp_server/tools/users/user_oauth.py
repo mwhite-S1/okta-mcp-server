@@ -135,11 +135,38 @@ async def revoke_tokens_for_user_and_client(
     """
     logger.warning(f"Revocation requested for all tokens of user {user_id} for client {client_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        import json as _json_tmp
+        _req_exec = _client_tmp.get_request_executor()
+        _app_url = f"{_client_tmp.get_base_url()}/api/v1/apps/{client_id}"
+        _app_req, _ = await _req_exec.create_request("GET", _app_url, {})
+        _, _app_body, _ = await _req_exec.execute(_app_req)
+        if isinstance(_app_body, str):
+            try:
+                _app_body = _json_tmp.loads(_app_body)
+            except Exception:
+                pass
+        _app_label = _app_body.get("label", "") if isinstance(_app_body, dict) else ""
+    except Exception:
+        _app_label = ""
+    try:
+        _user_obj, _, _ = await _client_tmp.get_user(user_id)
+        _user_login = (
+            _user_obj.profile.login
+            if hasattr(_user_obj, "profile") and hasattr(_user_obj.profile, "login")
+            else (_user_obj.get("profile", {}) or {}).get("login", "") if isinstance(_user_obj, dict) else ""
+        )
+    except Exception:
+        _user_login = ""
+    _client_resource = f"'{_app_label}' ({client_id})" if _app_label else client_id
+    _user_resource = f"'{_user_login}' ({user_id})" if _user_login else user_id
+
     fallback_payload = {
         "confirmation_required": True,
         "message": (
-            f"To confirm revoking all refresh tokens for client {client_id} "
-            f"belonging to user {user_id}, please explicitly confirm."
+            f"To confirm revoking all refresh tokens for client {_client_resource} "
+            f"belonging to user {_user_resource}, please explicitly confirm."
         ),
         "user_id": user_id,
         "client_id": client_id,
@@ -147,7 +174,7 @@ async def revoke_tokens_for_user_and_client(
 
     outcome = await elicit_or_fallback(
         ctx,
-        message=REVOKE_TOKENS_FOR_CLIENT.format(client_id=client_id, user_id=user_id),
+        message=REVOKE_TOKENS_FOR_CLIENT.format(resource=_client_resource, user_resource=_user_resource),
         schema=DeleteConfirmation,
         fallback_payload=fallback_payload,
     )

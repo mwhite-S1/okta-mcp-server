@@ -5,6 +5,7 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and limitations under the License.
 
+import json as _json
 from typing import Optional
 
 from loguru import logger
@@ -16,6 +17,25 @@ from okta_mcp_server.utils.elicitation import DeactivateConfirmation, DeleteConf
 from okta_mcp_server.utils.messages import DEACTIVATE_USER, DELETE_USER
 from okta_mcp_server.utils.pagination import build_query_params, create_paginated_response, paginate_all_results
 from okta_mcp_server.utils.validation import validate_ids
+
+
+async def _execute(client, method: str, path: str, body: dict = None):
+    request_executor = client.get_request_executor()
+    url = f"{client.get_base_url()}{path}"
+    request, error = await request_executor.create_request(method, url, body or {})
+    if error:
+        return None, None, error
+    response, response_body, error = await request_executor.execute(request)
+    if error:
+        return None, None, error
+    if not response_body:
+        return response, None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response, response_body, None
 
 
 @mcp.tool()
@@ -160,9 +180,10 @@ async def get_user_profile_attributes(ctx: Context = None) -> list:
 
         if len(users) > 0:
             attributes = vars(users[0].profile)
-            logger.info(f"Successfully retrieved {len(attributes)} profile attributes")
-            logger.debug(f"Profile attributes: {list(attributes.keys())}")
-            return attributes
+            attr_names = [k for k, v in attributes.items() if not k.startswith("_")]
+            logger.info(f"Successfully retrieved {len(attr_names)} profile attributes")
+            logger.debug(f"Profile attributes: {attr_names}")
+            return {"attributes": attr_names, "total": len(attr_names)}
 
         logger.warning("No users found in the organization")
         return users  # no user has been created yet
@@ -196,13 +217,14 @@ async def get_user(user_id: str, ctx: Context = None) -> list:
 
         if err:
             logger.error(f"Okta API error while getting user {user_id}: {err}")
-            return [f"Error: {err}"]
+            return {"error": str(err)}
 
+        result = user.to_dict() if hasattr(user, "to_dict") else user
         logger.info(f"Successfully retrieved user: {user.profile.email if hasattr(user, 'profile') else user_id}")
-        return [user]
+        return result
     except Exception as e:
         logger.error(f"Exception while getting user {user_id}: {type(e).__name__}: {e}")
-        return [f"Exception: {e}"]
+        return {"error": str(e)}
 
 
 @mcp.tool()
@@ -296,9 +318,17 @@ async def deactivate_user(user_id: str, ctx: Context = None) -> list:
     """
     logger.info(f"Deactivation requested for user: {user_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _, _user_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/users/{user_id}")
+        _user_login = (_user_obj.get("profile", {}) or {}).get("login", "") if isinstance(_user_obj, dict) else ""
+    except Exception:
+        _user_login = ""
+    _user_resource = f"'{_user_login}' ({user_id})" if _user_login else user_id
+
     outcome = await elicit_or_fallback(
         ctx,
-        message=DEACTIVATE_USER.format(user_id=user_id),
+        message=DEACTIVATE_USER.format(resource=_user_resource),
         schema=DeactivateConfirmation,
         auto_confirm_on_fallback=True,
     )
@@ -313,14 +343,14 @@ async def deactivate_user(user_id: str, ctx: Context = None) -> list:
         client = await get_okta_client(manager)
         logger.debug(f"Calling Okta API to deactivate user {user_id}")
 
-        _, err = await client.deactivate_user(user_id)
+        _, _, err = await _execute(client, "POST", f"/api/v1/users/{user_id}/lifecycle/deactivate")
 
         if err:
             logger.error(f"Okta API error while deactivating user {user_id}: {err}")
-            return [f"Error: {err}"]
+            return {"error": str(err)}
 
         logger.info(f"Successfully deactivated user: {user_id}")
-        return [f"User {user_id} deactivated successfully."]
+        return {"message": f"User {user_id} deactivated successfully."}
     except Exception as e:
         logger.error(f"Exception while deactivating user {user_id}: {type(e).__name__}: {e}")
         return [f"Exception: {e}"]
@@ -342,9 +372,17 @@ async def delete_deactivated_user(user_id: str, ctx: Context = None) -> list:
     """
     logger.info(f"Deletion requested for deactivated user: {user_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _, _user_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/users/{user_id}")
+        _user_login = (_user_obj.get("profile", {}) or {}).get("login", "") if isinstance(_user_obj, dict) else ""
+    except Exception:
+        _user_login = ""
+    _user_resource = f"'{_user_login}' ({user_id})" if _user_login else user_id
+
     outcome = await elicit_or_fallback(
         ctx,
-        message=DELETE_USER.format(user_id=user_id),
+        message=DELETE_USER.format(resource=_user_resource),
         schema=DeleteConfirmation,
         auto_confirm_on_fallback=True,
     )
@@ -359,14 +397,14 @@ async def delete_deactivated_user(user_id: str, ctx: Context = None) -> list:
         client = await get_okta_client(manager)
         logger.debug(f"Calling Okta API to delete user {user_id}")
 
-        _, err = await client.deactivate_or_delete_user(user_id)
+        _, _, err = await _execute(client, "DELETE", f"/api/v1/users/{user_id}")
 
         if err:
             logger.error(f"Okta API error while deleting user {user_id}: {err}")
-            return [f"Error: {err}"]
+            return {"error": str(err)}
 
         logger.info(f"Successfully deleted user: {user_id}")
-        return [f"User {user_id} deleted successfully."]
+        return {"message": f"User {user_id} deleted successfully."}
     except Exception as e:
         logger.error(f"Exception while deleting user {user_id}: {type(e).__name__}: {e}")
         return [f"Exception: {e}"]

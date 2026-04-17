@@ -13,6 +13,7 @@ principal already holds — or is requesting — entitlements that should not
 be held concurrently.
 """
 
+import json as _json
 from typing import Optional
 from urllib.parse import urlencode
 
@@ -32,7 +33,14 @@ async def _execute(client, method: str, path: str, body: dict = None):
     response, response_body, error = await request_executor.execute(request)
     if error:
         return None, error
-    return response_body if response_body else None, None
+    if not response_body:
+        return None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response_body, None
 
 
 @mcp.tool()
@@ -40,6 +48,7 @@ async def list_risk_rules(
     ctx: Context,
     after: Optional[str] = None,
     limit: Optional[int] = None,
+    filter: Optional[str] = None,
 ) -> dict:
     """List governance risk rules in the Okta organization.
 
@@ -51,6 +60,9 @@ async def list_risk_rules(
     Parameters:
         after (str, optional): Pagination cursor for the next page of results.
         limit (int, optional): Maximum number of risk rules to return per page.
+        filter (str, optional): Filter expression. Supports filtering by
+            ``resourceOrn`` and ``name`` properties.
+            Example: 'resourceOrn eq "orn:okta:..." AND name eq "SOD Rule"'
 
     Returns:
         Dictionary containing a list of risk rule objects and pagination info.
@@ -66,6 +78,8 @@ async def list_risk_rules(
             params["after"] = after
         if limit:
             params["limit"] = limit
+        if filter:
+            params["filter"] = filter
 
         path = "/governance/api/v1/risk-rules"
         if params:
@@ -106,22 +120,40 @@ async def create_risk_rule(
             (max 1 item). Each item: {"resourceOrn": "<orn_string>"}.
             Example: [{"resourceOrn": "orn:okta:..."}]
         conflict_criteria (dict, required): Defines the entitlement conflict.
+            Exactly 2 criteria items required in the "and" array.
             Structure:
             {
                 "and": [
                     {
                         "name": "criteria_1_name",
                         "attribute": "principal.effective_grants",
-                        ...
+                        "operation": "CONTAINS_ONE",  # or "CONTAINS_ALL"
+                        "value": {
+                            "type": "ENTITLEMENTS",
+                            "value": [
+                                {
+                                    "id": "<entitlement_id>",
+                                    "values": [{"id": "<entitlement_value_id>"}]
+                                }
+                            ]
+                        }
                     },
                     {
                         "name": "criteria_2_name",
                         "attribute": "principal.effective_grants",
-                        ...
+                        "operation": "CONTAINS_ONE",
+                        "value": {
+                            "type": "ENTITLEMENTS",
+                            "value": [
+                                {
+                                    "id": "<entitlement_id>",
+                                    "values": [{"id": "<entitlement_value_id>"}]
+                                }
+                            ]
+                        }
                     }
                 ]
             }
-            Exactly 2 criteria items are required in the "and" array.
         description (str, optional): Human-readable description (max 1000 chars)
             explaining the SOD conflict the rule prevents.
         notes (str, optional): Additional notes about the rule (max 1000 chars).
@@ -201,8 +233,9 @@ async def update_risk_rule(
 ) -> dict:
     """Update an existing governance risk rule (PUT).
 
-    The `id` field in the request body must match rule_id. Only include
-    the fields you want to update.
+    The PUT body only requires ``id``; all other fields are optional and only
+    provided fields are modified. Note: ``type`` and ``resources`` (from create)
+    are NOT part of the update schema and cannot be changed.
 
     Parameters:
         rule_id (str, required): The ID of the risk rule to update.
@@ -287,24 +320,27 @@ async def assess_risk_rules(
     principal_orn: str,
     resource_orns: Optional[list] = None,
 ) -> dict:
-    """Evaluate risk rules against a principal (and optionally specific resources) to identify separation-of-duties conflicts.
+    """Evaluate risk rules against a principal and specific resources to identify separation-of-duties conflicts.
 
     Runs the configured SOD risk rules against a principal's current
-    entitlements and, if supplied, the candidate resources being requested
-    or reviewed. Use this tool to proactively surface conflicts before
-    approving access requests or during access certification reviews.
+    entitlements and candidate resources. Returns an empty list when no risk
+    rules are configured.
+
+    IMPORTANT: The API requires either resourceOrn or resourceOrnList — the
+    resource_orns parameter is required in practice even though the schema marks
+    it optional.
 
     Parameters:
-        principal_orn (str, required): The Okta user ORN (Okta Resource Name)
-            to evaluate risk rules against.
-            Example: "orn:okta:directory:00o123:users:00u456"
-        resource_orns (list, optional): List of resource ORNs to scope the
+        principal_orn (str, required): The Okta user ORN in orn:okta: format.
+            Always use "orn:okta:" prefix (not "orn:oktapreview:") even on
+            preview orgs.
+            Example: "orn:okta:directory:00o1e0scx8qAmdRrp1d7:users:00u2jwpk6vzxtprnF1d7"
+        resource_orns (list, required): List of resource ORNs to scope the
             assessment to. All items must be the same resource type. Limits:
-            - Max 1 collection ORN
-            - Max 1 bundle ORN
-            - Max 20 entitlement ORNs
-            When omitted, the assessment covers all resources the principal
-            currently has access to.
+            - Max 1 collection ORN:  "orn:okta:governance:{orgId}:collections:{id}"
+            - Max 1 bundle ORN:      "orn:okta:governance:{orgId}:entitlement-bundles:{id}"
+            - Max 20 entitlement ORNs (note: bundle ORNs are confirmed to work;
+              use list_entitlement_bundles to get bundle ORNs with their orn field)
 
     Returns:
         Dictionary containing the risk assessment results, including any

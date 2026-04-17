@@ -11,6 +11,7 @@ These tools operate in the context of the authenticated user (the "me" perspecti
 as opposed to the admin tools which operate on behalf of any user.
 """
 
+import json as _json
 from typing import Optional
 from urllib.parse import urlencode
 
@@ -31,7 +32,14 @@ async def _execute(client, method: str, path: str, body: dict = None):
     response, response_body, error = await request_executor.execute(request)
     if error:
         return None, error
-    return response_body if response_body else None, None
+    if not response_body:
+        return None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response_body, None
 
 
 # ---------------------------------------------------------------------------

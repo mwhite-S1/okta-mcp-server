@@ -5,6 +5,7 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and limitations under the License.
 
+import json as _json
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -13,6 +14,25 @@ from mcp.server.fastmcp import Context
 from okta_mcp_server.server import mcp
 from okta_mcp_server.utils.client import get_okta_client
 from okta_mcp_server.utils.validation import validate_ids
+
+
+async def _execute(client, method: str, path: str, body=None):
+    request_executor = client.get_request_executor()
+    url = f"{client.get_base_url()}{path}"
+    request, error = await request_executor.create_request(method, url, body if body is not None else {})
+    if error:
+        return None, None, error
+    response, response_body, error = await request_executor.execute(request)
+    if error:
+        return None, None, error
+    if not response_body:
+        return response, None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response, response_body, None
 
 
 @mcp.tool()
@@ -43,23 +63,28 @@ async def list_application_group_assignments(
 
     try:
         client = await get_okta_client(manager)
-        kwargs = {}
+        params = {}
         if q:
-            kwargs["q"] = q
+            params["q"] = q
         if after:
-            kwargs["after"] = after
+            params["after"] = after
         if limit:
-            kwargs["limit"] = limit
+            params["limit"] = limit
         if expand:
-            kwargs["expand"] = expand
+            params["expand"] = expand
 
-        assignments, _, err = await client.list_application_group_assignments(app_id, **kwargs)
+        from urllib.parse import urlencode
+        path = f"/api/v1/apps/{app_id}/groups"
+        if params:
+            path += f"?{urlencode(params)}"
+
+        _, body, err = await _execute(client, "GET", path)
 
         if err:
             logger.error(f"Error listing group assignments for app {app_id}: {err}")
             return {"error": str(err)}
 
-        items = [a.to_dict() if hasattr(a, "to_dict") else a for a in (assignments or [])]
+        items = body if isinstance(body, list) else []
         logger.info(f"Retrieved {len(items)} group assignments for app {app_id}")
         return {"items": items, "total_fetched": len(items)}
 
@@ -180,13 +205,13 @@ async def update_application_group_assignment(
 
     try:
         client = await get_okta_client(manager)
-        result, _, err = await client.update_group_assignment_to_application(app_id, group_id, patch_operations)
+        _, result, err = await _execute(client, "PATCH", f"/api/v1/apps/{app_id}/groups/{group_id}", patch_operations)
 
         if err:
             logger.error(f"Error updating group {group_id} for app {app_id}: {err}")
             return {"error": str(err)}
 
-        out = result.to_dict() if hasattr(result, "to_dict") else result
+        out = result if isinstance(result, dict) else {}
         logger.info(f"Updated group {group_id} assignment for app {app_id}")
         return out
 

@@ -5,6 +5,7 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and limitations under the License.
 
+import json as _json
 from typing import Any, Dict, Optional
 
 from loguru import logger
@@ -15,6 +16,26 @@ from okta_mcp_server.utils.client import get_okta_client
 from okta_mcp_server.utils.elicitation import DeleteConfirmation, elicit_or_fallback
 from okta_mcp_server.utils.messages import UNENROLL_FACTOR
 from okta_mcp_server.utils.validation import validate_ids
+
+
+async def _execute(client, method: str, path: str, body: dict = None):
+    """Make a direct API call bypassing SDK Pydantic deserialization."""
+    request_executor = client.get_request_executor()
+    url = f"{client.get_base_url()}{path}"
+    request, error = await request_executor.create_request(method, url, body or {})
+    if error:
+        return None, error
+    response, response_body, error = await request_executor.execute(request)
+    if error:
+        return None, error
+    if not response_body:
+        return None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response_body, None
 
 
 @mcp.tool()
@@ -28,11 +49,14 @@ async def list_factors(
     Returns all authenticator factors (TOTP, SMS, push, security key, etc.)
     that a user has enrolled, along with their status and metadata.
 
+    Uses a direct API call to avoid SDK Pydantic deserialization errors on
+    non-standard factor types (e.g. signed_nonce, webauthn).
+
     Parameters:
         user_id (str, required): The ID of the user.
 
     Returns:
-        Dict with items (list of UserFactor objects) and total_fetched.
+        Dict with items (list of factor objects) and total_fetched.
     """
     logger.info(f"Listing factors for user {user_id}")
 
@@ -40,13 +64,13 @@ async def list_factors(
 
     try:
         client = await get_okta_client(manager)
-        factors, _, err = await client.list_factors(user_id)
+        body, err = await _execute(client, "GET", f"/api/v1/users/{user_id}/factors")
 
         if err:
             logger.error(f"Error listing factors for user {user_id}: {err}")
             return {"error": str(err)}
 
-        items = [f.to_dict() if hasattr(f, "to_dict") else f for f in (factors or [])]
+        items = body if isinstance(body, list) else []
         logger.info(f"Retrieved {len(items)} factor(s) for user {user_id}")
         return {"items": items, "total_fetched": len(items)}
 
@@ -258,15 +282,20 @@ async def activate_factor(
 
     try:
         client = await get_okta_client(manager)
-        factor, _, err = await client.activate_factor(user_id, factor_id, activation)
+        # Use direct API call — SDK's UserFactorActivateRequest model only has
+        # useNumberMatchingChallenge (push factors) and strips passCode for TOTP.
+        body, err = await _execute(
+            client, "POST",
+            f"/api/v1/users/{user_id}/factors/{factor_id}/lifecycle/activate",
+            activation
+        )
 
         if err:
             logger.error(f"Error activating factor {factor_id} for user {user_id}: {err}")
             return {"error": str(err)}
 
-        out = factor.to_dict() if hasattr(factor, "to_dict") else factor
         logger.info(f"Activated factor {factor_id} for user {user_id}")
-        return out
+        return body or {"message": f"Factor {factor_id} activated successfully"}
 
     except Exception as e:
         logger.error(f"Exception activating factor {factor_id} for user {user_id}: {type(e).__name__}: {e}")
@@ -296,16 +325,41 @@ async def unenroll_factor(
     """
     logger.warning(f"Unenroll requested for factor {factor_id} from user {user_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _factor_obj, _, _ = await _client_tmp.get_factor(user_id, factor_id)
+        _factor_type = (
+            _factor_obj.factorType
+            if hasattr(_factor_obj, "factorType")
+            else (_factor_obj.get("factorType", "") if isinstance(_factor_obj, dict) else "")
+        )
+    except Exception:
+        _factor_type = ""
+    try:
+        _user_obj, _, _ = await _client_tmp.get_user(user_id)
+        _user_login = (
+            _user_obj.profile.login
+            if hasattr(_user_obj, "profile") and hasattr(_user_obj.profile, "login")
+            else (_user_obj.get("profile", {}) or {}).get("login", "") if isinstance(_user_obj, dict) else ""
+        )
+    except Exception:
+        _user_login = ""
+    _factor_resource = f"'{_factor_type}' ({factor_id})" if _factor_type else factor_id
+    _user_resource = f"'{_user_login}' ({user_id})" if _user_login else user_id
+
     fallback_payload = {
         "confirmation_required": True,
-        "message": f"To confirm unenrolling factor {factor_id} from user {user_id}, please explicitly confirm.",
+        "message": (
+            f"To confirm unenrolling factor {_factor_resource} from user {_user_resource}, "
+            "please explicitly confirm."
+        ),
         "user_id": user_id,
         "factor_id": factor_id,
     }
 
     outcome = await elicit_or_fallback(
         ctx,
-        message=UNENROLL_FACTOR.format(factor_id=factor_id, user_id=user_id),
+        message=UNENROLL_FACTOR.format(resource=_factor_resource, user_resource=_user_resource),
         schema=DeleteConfirmation,
         fallback_payload=fallback_payload,
     )
@@ -369,16 +423,20 @@ async def verify_factor(
 
     try:
         client = await get_okta_client(manager)
-        body = verification or {}
-        result, _, err = await client.verify_factor(user_id, factor_id, body)
+        # Use direct API call — SDK's UserFactorVerifyRequest model only has
+        # useNumberMatchingChallenge (push factors) and strips passCode for TOTP.
+        body, err = await _execute(
+            client, "POST",
+            f"/api/v1/users/{user_id}/factors/{factor_id}/verify",
+            verification or {}
+        )
 
         if err:
             logger.error(f"Error verifying factor {factor_id} for user {user_id}: {err}")
             return {"error": str(err)}
 
-        out = result.to_dict() if hasattr(result, "to_dict") else result
         logger.info(f"Verified factor {factor_id} for user {user_id}")
-        return out or {"message": f"Factor {factor_id} verification initiated for user {user_id}."}
+        return body or {"message": f"Factor {factor_id} verification initiated for user {user_id}."}
 
     except Exception as e:
         logger.error(f"Exception verifying factor {factor_id} for user {user_id}: {type(e).__name__}: {e}")

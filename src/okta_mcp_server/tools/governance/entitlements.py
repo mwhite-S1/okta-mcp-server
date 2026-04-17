@@ -7,6 +7,7 @@
 
 """Governance entitlements tools: entitlements, bundles, grants, principal entitlements, principal access."""
 
+import json as _json
 from typing import Optional
 from urllib.parse import urlencode
 
@@ -29,7 +30,14 @@ async def _execute(client, method: str, path: str, body: dict = None):
     response, response_body, error = await request_executor.execute(request)
     if error:
         return None, error
-    return response_body if response_body else None, None
+    if not response_body:
+        return None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response_body, None
 
 
 # ---------------------------------------------------------------------------
@@ -476,7 +484,7 @@ async def create_entitlement_bundle(ctx: Context, bundle: dict) -> dict:
                 - type (str): Must be "APPLICATION".
             - entitlements (list): Entitlement references to include in the bundle.
                 Each item: {"id": "<entitlement_id>", "values": [{"id": "<value_id>"}]}.
-                Can be an empty list if no specific entitlements are pre-selected.
+                Must be non-empty — an empty list causes 400 "field /entitlements is missing".
             Optional fields:
             - description (str): Bundle description.
 
@@ -485,7 +493,7 @@ async def create_entitlement_bundle(ctx: Context, bundle: dict) -> dict:
                 "name": "Salesforce Admin Bundle",
                 "description": "Admin-level Salesforce access",
                 "target": {"externalId": "0oaABC123", "type": "APPLICATION"},
-                "entitlements": []
+                "entitlements": [{"id": "ent123...", "values": [{"id": "entv456..."}]}]
             }
 
     Returns:
@@ -554,6 +562,8 @@ async def update_entitlement_bundle(ctx: Context, bundle_id: str, bundle: dict) 
         bundle (dict, required): The full replacement bundle object. Required fields:
             - id (str): Must match bundle_id.
             - name (str): Bundle name.
+            - status (str): Bundle status — required by PUT; omitting causes 400
+                "PUT API does not support replacing null status". Use "ACTIVE".
             - targetResourceOrn (str): ORN of the target resource.
             - target (dict): Application reference:
                 - externalId (str): Okta app ID (e.g. "0oaABC123...").
@@ -629,11 +639,14 @@ async def list_grants(
     """List governance grants in the Okta organization.
 
     Grants represent assignments of entitlements or entitlement bundles to a
-    principal (user or group). The filter must reference a specific resource.
+    principal (user or group). The filter must reference a specific resource
+    using target.externalId and target.type (not resourceId).
 
     Parameters:
         filter (str, required): SCIM filter expression (required by the API).
-            Must reference a resource. Example: 'resourceId eq "abc123"'.
+            Must use target.externalId AND target.type together. Example:
+            'target.externalId eq "0oa..." AND target.type eq "APPLICATION"'
+            Note: 'resourceId eq "..."' is NOT a valid filter field here.
         after (str, optional): Pagination cursor for the next page of results.
         limit (int, optional): Maximum number of grants to return per page.
 
@@ -670,14 +683,48 @@ async def list_grants(
 async def create_grant(ctx: Context, grant: dict) -> dict:
     """Create a governance grant to assign entitlements to a principal.
 
-    Grants assign entitlements or entitlement bundles to a user or group.
+    Grants assign entitlements or entitlement bundles to a user. Uses a
+    discriminated union based on ``grantType``.
 
     Parameters:
-        grant (dict, required): Grant configuration. Key fields:
-            - principalId (str): The user or group ID receiving the grant.
-            - resourceId (str): The resource the grant applies to.
-            - entitlementId (str) or bundleId (str): What is being granted.
-            - type (str): Grant type (e.g. "DIRECT").
+        grant (dict, required): Grant configuration. Shape depends on grantType:
+
+            Required for ALL types:
+            - grantType (str): Discriminator. One of:
+                "ENTITLEMENT-BUNDLE" — assigns a bundle to a user
+                "ENTITLEMENT"        — assigns specific entitlement values
+                "CUSTOM"             — assigns entitlements from a custom source
+                "POLICY"             — assigns entitlements driven by policy
+            - targetPrincipal (dict): The user receiving the grant:
+                - externalId (str): Okta user ID (e.g. "00u...").
+                - type (str): Must be "OKTA_USER".
+
+            For grantType "ENTITLEMENT-BUNDLE":
+            - entitlementBundleId (str, required): The bundle ID.
+
+            For grantType "ENTITLEMENT":
+            - target (dict, required): {"externalId": "<app_id>", "type": "APPLICATION"}
+            - entitlements (list, required): List of entitlement references:
+                [{"id": "<entitlement_id>", "values": [{"id": "<value_id>"}]}]
+
+            For grantType "CUSTOM":
+            - target (dict, required): {"externalId": "<app_id>", "type": "APPLICATION"}
+            - entitlements (list, optional): Entitlement references.
+
+            For grantType "POLICY":
+            - target (dict, required): {"externalId": "<app_id>", "type": "APPLICATION"}
+
+            Optional for all types:
+            - scheduleSettings (dict): {"expirationDate": "ISO8601", "timeZone": "IANA"}
+            - action (str): "ALLOW" or "DENY"
+            - actor (str): "API", "ACCESS_REQUEST", "NONE", or "ADMIN"
+
+        Example (ENTITLEMENT-BUNDLE):
+            {
+                "grantType": "ENTITLEMENT-BUNDLE",
+                "entitlementBundleId": "gbun...",
+                "targetPrincipal": {"externalId": "00u...", "type": "OKTA_USER"}
+            }
 
     Returns:
         Dictionary containing the created grant or error information.
@@ -732,9 +779,16 @@ async def get_grant(ctx: Context, grant_id: str) -> dict:
 async def update_grant(ctx: Context, grant_id: str, grant: dict) -> dict:
     """Replace a governance grant (full update via PUT).
 
+    IMPORTANT: The PUT body must include ALL fields — both writable fields
+    AND read-only system fields (id, status, created, createdBy, lastUpdated,
+    lastUpdatedBy, _links). Omitting system fields causes a 400 error.
+    Best practice: call get_grant first to retrieve the full object, modify
+    what you need, then pass the complete object here.
+
     Parameters:
         grant_id (str, required): The ID of the grant to replace.
-        grant (dict, required): The full replacement grant object.
+        grant (dict, required): The full replacement grant object including
+            all system fields from the existing grant.
 
     Returns:
         Dictionary containing the updated grant or error information.
@@ -758,12 +812,22 @@ async def update_grant(ctx: Context, grant_id: str, grant: dict) -> dict:
 
 
 @mcp.tool()
-async def patch_grant(ctx: Context, grant_id: str, operations: list) -> dict:
-    """Partially update a governance grant using patch operations.
+async def patch_grant(ctx: Context, grant_id: str, patch_data: dict) -> dict:
+    """Partially update a governance grant (expiration date).
+
+    The grant PATCH endpoint only supports updating schedule settings
+    (expiration date). It uses a specific schema, not JSON Patch operations.
 
     Parameters:
         grant_id (str, required): The ID of the grant to patch.
-        operations (list, required): List of patch operation objects.
+        patch_data (dict, required): Patch object with:
+            - id (str, required): The grant ID (must match grant_id).
+            - scheduleSettings (dict, required): Schedule configuration:
+                - expirationDate (str): ISO 8601 expiration date (UTC).
+                - timeZone (str, optional): IANA timezone, e.g. "America/Toronto".
+
+    Example:
+        patch_data={"id": "gra...", "scheduleSettings": {"expirationDate": "2027-01-01T00:00:00Z"}}
 
     Returns:
         Dictionary containing the updated grant or error information.
@@ -774,7 +838,7 @@ async def patch_grant(ctx: Context, grant_id: str, operations: list) -> dict:
     try:
         client = await get_okta_client(manager)
         body, error = await _execute(
-            client, "PATCH", f"/governance/api/v1/grants/{grant_id}", operations
+            client, "PATCH", f"/governance/api/v1/grants/{grant_id}", patch_data
         )
         if error:
             logger.error(f"Okta API error patching grant {grant_id}: {error}")
@@ -805,7 +869,15 @@ async def list_principal_entitlements(
 
     Parameters:
         filter (str, required): SCIM filter expression (required by the API).
-            Example: 'principalId eq "00u123..."'.
+            Must use resource + principal fields. Supported fields:
+            - parent.externalId (eq): Okta app ID
+            - parent.type (eq): e.g. "APPLICATION"
+            - targetPrincipal.externalId (eq): Okta user or group ID
+            - targetPrincipal.type (eq): "OKTA_USER" or "OKTA_GROUP"
+            - parentResourceOrn (eq): full resource ORN
+            - targetPrincipalOrn (eq): full principal ORN
+            Example: 'parent.externalId eq "0oa..." AND parent.type eq "APPLICATION"
+                      AND targetPrincipal.externalId eq "00u..." AND targetPrincipal.type eq "OKTA_USER"'
         after (str, optional): Pagination cursor for the next page of results.
 
     Returns:
@@ -849,12 +921,24 @@ async def get_principal_entitlement_history(
 
     Parameters:
         filter (str, required): SCIM filter expression (required by the API).
-            Example: 'principalId eq "00u123..."'.
+            Supported filter fields:
+            - resource.externalId (eq): Okta app ID
+            - resource.type (eq): e.g. "APPLICATION"
+            - principal.externalId (eq): Okta user or group ID
+            - principal.type (eq): "OKTA_USER" or "OKTA_GROUP"
+            - resourceOrn (eq): full resource ORN
+            - principalOrn (eq): full principal ORN
+            - principalId (eq): Okta user ID (shorthand)
+            - startDate (eq): ISO 8601 date filter
+            - endDate (eq): ISO 8601 date filter
+            Example: 'resource.externalId eq "0oa..." AND resource.type eq "APPLICATION"
+                      AND principal.externalId eq "00u..." AND principal.type eq "OKTA_USER"'
         after (str, optional): Pagination cursor for the next page of results.
         limit (int, optional): Maximum number of history entries to return.
 
     Returns:
-        Dictionary containing entitlement history entries and pagination info.
+        Dictionary containing entitlement history entries (startDate, endDate,
+        lifecycle, entitlements) and pagination info.
     """
     logger.info("Getting principal entitlement history")
     manager = ctx.request_context.lifespan_context.okta_auth_manager
@@ -934,7 +1018,15 @@ async def get_principal_access(
 
     Parameters:
         filter (str, required): SCIM filter expression.
-            Example: 'principalId eq "00u123..."'.
+            Must use resource + principal fields. Supported fields:
+            - parent.externalId (eq): Okta app ID
+            - parent.type (eq): e.g. "APPLICATION"
+            - targetPrincipal.externalId (eq): Okta user or group ID
+            - targetPrincipal.type (eq): "OKTA_USER" or "OKTA_GROUP"
+            - parentResourceOrn (eq): full resource ORN
+            - targetPrincipalOrn (eq): full principal ORN
+            Example: 'parent.externalId eq "0oa..." AND parent.type eq "APPLICATION"
+                      AND targetPrincipal.externalId eq "00u..." AND targetPrincipal.type eq "OKTA_USER"'
         after (str, optional): Pagination cursor for the next page of results.
         limit (int, optional): Maximum number of results to return.
 
@@ -984,14 +1076,22 @@ async def revoke_principal_access(ctx: Context, resource_id: str, principal_id: 
     """
     logger.warning(f"Revoke access requested: principal={principal_id}, resource={resource_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _user_obj, _ = await _execute(_client_tmp, "GET", f"/api/v1/users/{principal_id}")
+        _user_login = (_user_obj.get("profile", {}) or {}).get("login", "") if isinstance(_user_obj, dict) else ""
+    except Exception:
+        _user_login = ""
+    _principal_resource = f"'{_user_login}' ({principal_id})" if _user_login else principal_id
+
     outcome = await elicit_or_fallback(
         ctx,
-        message=REVOKE_PRINCIPAL_ACCESS.format(principal_id=principal_id, resource_id=resource_id),
+        message=REVOKE_PRINCIPAL_ACCESS.format(resource=_principal_resource, resource_id=resource_id),
         schema=DeleteConfirmation,
         fallback_payload={
             "confirmation_required": True,
             "message": (
-                f"Confirm revocation of access for principal {principal_id} "
+                f"Confirm revocation of access for principal {_principal_resource} "
                 f"on resource {resource_id}. This action cannot be undone."
             ),
             "principal_id": principal_id,

@@ -40,10 +40,22 @@ async def revoke_user_sessions(
     """
     logger.warning(f"Session revocation requested for user {user_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _user_obj, _, _ = await _client_tmp.get_user(user_id)
+        _user_login = (
+            _user_obj.profile.login
+            if hasattr(_user_obj, "profile") and hasattr(_user_obj.profile, "login")
+            else (_user_obj.get("profile", {}) or {}).get("login", "") if isinstance(_user_obj, dict) else ""
+        )
+    except Exception:
+        _user_login = ""
+    _user_resource = f"'{_user_login}' ({user_id})" if _user_login else user_id
+
     fallback_payload = {
         "confirmation_required": True,
         "message": (
-            f"To confirm revoking all sessions for user {user_id}, please explicitly confirm. "
+            f"To confirm revoking all sessions for user {_user_resource}, please explicitly confirm. "
             f"oauth_tokens={oauth_tokens}, forget_devices={forget_devices}."
         ),
         "user_id": user_id,
@@ -51,7 +63,7 @@ async def revoke_user_sessions(
 
     outcome = await elicit_or_fallback(
         ctx,
-        message=REVOKE_USER_SESSIONS.format(user_id=user_id),
+        message=REVOKE_USER_SESSIONS.format(resource=_user_resource),
         schema=DeleteConfirmation,
         fallback_payload=fallback_payload,
     )

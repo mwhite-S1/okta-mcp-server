@@ -7,6 +7,7 @@
 
 """Governance delegates tools: org settings, delegate listings, principal settings."""
 
+import json as _json
 from typing import Optional
 from urllib.parse import urlencode
 
@@ -17,17 +18,24 @@ from okta_mcp_server.server import mcp
 from okta_mcp_server.utils.client import get_okta_client
 
 
-async def _execute(client, method: str, path: str, body: dict = None):
+async def _execute(client, method: str, path: str, body: dict = None, keep_empty_params: bool = False):
     """Make a direct API call via the SDK request executor."""
     request_executor = client.get_request_executor()
     url = f"{client.get_base_url()}{path}"
-    request, error = await request_executor.create_request(method, url, body or {})
+    request, error = await request_executor.create_request(method, url, body or {}, keep_empty_params=keep_empty_params)
     if error:
         return None, error
     response, response_body, error = await request_executor.execute(request)
     if error:
         return None, error
-    return response_body if response_body else None, None
+    if not response_body:
+        return None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response_body, None
 
 
 @mcp.tool()
@@ -132,15 +140,16 @@ async def get_principal_governance_settings(ctx: Context, principal_id: str) -> 
 
     try:
         client = await get_okta_client(manager)
-        body, error = await _execute(
-            client, "GET", f"/governance/api/v1/principal-settings/{principal_id}"
-        )
+        # Okta's governance API does not support GET on /principal-settings/{id}.
+        # The admin-readable equivalent is the delegates endpoint filtered by principalId.
+        path = f"/governance/api/v1/delegates?{urlencode({'principalId': principal_id})}"
+        body, error = await _execute(client, "GET", path)
         if error:
             logger.error(f"Okta API error getting settings for {principal_id}: {error}")
             return {"error": str(error)}
 
         logger.info(f"Successfully retrieved governance settings for: {principal_id}")
-        return body
+        return body or {"delegateAppointments": []}
 
     except Exception as e:
         logger.error(f"Exception getting settings for {principal_id}: {type(e).__name__}: {e}")
@@ -156,27 +165,31 @@ async def update_principal_governance_settings(
     """Update the governance delegate settings for a specific user (principal).
 
     Assigns delegates who can act on behalf of the specified user during access
-    certification reviews and access request approvals.
+    certification reviews and access request approvals. Pass an empty list to
+    remove all delegate appointments.
 
     Parameters:
         principal_id (str, required): The Okta user ID to update settings for.
         delegate_appointments (list, required): List of delegate appointment objects.
-            Each appointment should include:
-              - type: "ACCESS_CERTIFICATIONS" or "ACCESS_REQUESTS"
-              - externalId: The Okta user ID of the delegate
-              - note (optional): A note describing the delegation
-              - startTime (optional): ISO 8601 start time
-              - endTime (optional): ISO 8601 end time
+            Each appointment must include:
+              - delegate (dict, required): The delegate identity object:
+                  - type (str): Must be "OKTA_USER"
+                  - externalId (str): Okta user ID of the delegate
+              - note (str, optional): A description of the delegation
+              - startTime (str, optional): ISO 8601 start time
+              - endTime (str, optional): ISO 8601 end time
 
-    Example:
+    Example (add delegate):
         delegate_appointments=[
             {
-                "type": "ACCESS_CERTIFICATIONS",
-                "externalId": "00u1234567890abcdef",
+                "delegate": {"type": "OKTA_USER", "externalId": "00u1234567890abcdef"},
                 "note": "Covering during leave",
                 "endTime": "2026-12-31T00:00:00.000Z"
             }
         ]
+
+    Example (clear all delegates):
+        delegate_appointments=[]
 
     Returns:
         Dictionary containing the updated settings or error information.
@@ -186,9 +199,10 @@ async def update_principal_governance_settings(
 
     try:
         client = await get_okta_client(manager)
-        payload = {"delegateAppointments": delegate_appointments}
+        payload = {"delegates": {"appointments": delegate_appointments}}
         body, error = await _execute(
-            client, "PATCH", f"/governance/api/v1/principal-settings/{principal_id}", payload
+            client, "PATCH", f"/governance/api/v1/principal-settings/{principal_id}", payload,
+            keep_empty_params=True
         )
         if error:
             logger.error(f"Okta API error updating settings for {principal_id}: {error}")

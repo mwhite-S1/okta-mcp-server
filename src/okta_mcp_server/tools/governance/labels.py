@@ -7,6 +7,7 @@
 
 """Governance labels tools: list, create, update, delete, assign."""
 
+import json as _json
 from typing import Optional
 from urllib.parse import urlencode
 
@@ -29,7 +30,14 @@ async def _execute(client, method: str, path: str, body: dict = None):
     response, response_body, error = await request_executor.execute(request)
     if error:
         return None, error
-    return response_body if response_body else None, None
+    if not response_body:
+        return None, None
+    if isinstance(response_body, str):
+        try:
+            response_body = _json.loads(response_body)
+        except Exception:
+            pass
+    return response_body, None
 
 
 @mcp.tool()
@@ -65,8 +73,8 @@ async def list_governance_labels(
             params["filter"] = filter
         if after:
             params["after"] = after
-        if limit:
-            params["limit"] = limit
+        # NOTE: /governance/api/v1/labels does not accept a 'limit' parameter
+        # (returns 400 if passed). Silently drop it.
 
         path = "/governance/api/v1/labels"
         if params:
@@ -210,14 +218,22 @@ async def delete_governance_label(ctx: Context, label_id: str) -> dict:
     """
     logger.warning(f"Deletion requested for governance label: {label_id}")
 
+    try:
+        _client_tmp = await get_okta_client(ctx.request_context.lifespan_context.okta_auth_manager)
+        _label_obj, _ = await _execute(_client_tmp, "GET", f"/governance/api/v1/labels/{label_id}")
+        _label_name = _label_obj.get("name", "") if isinstance(_label_obj, dict) else ""
+    except Exception:
+        _label_name = ""
+    _label_resource = f"'{_label_name}' ({label_id})" if _label_name else label_id
+
     outcome = await elicit_or_fallback(
         ctx,
-        message=DELETE_GOVERNANCE_LABEL.format(label_id=label_id),
+        message=DELETE_GOVERNANCE_LABEL.format(resource=_label_resource),
         schema=DeleteConfirmation,
         fallback_payload={
             "confirmation_required": True,
             "message": (
-                f"To confirm deletion of governance label {label_id}, please confirm. "
+                f"To confirm deletion of governance label {_label_resource}, please confirm. "
                 "The label must have no values assigned to any resources."
             ),
             "label_id": label_id,
