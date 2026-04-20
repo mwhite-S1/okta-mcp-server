@@ -2,6 +2,42 @@
 USERS
 ════════════════════════════════════════
 
+## Lookup
+
+| Goal | Tool | Key Parameters |
+|------|------|----------------|
+| Find by email / login | `list_users` | `search='profile.login eq "jane.doe@example.com"'` — always use `search`, never `q`, for emails |
+| Find by exact first+last name | `list_users` | `search='profile.firstName eq "Jane" and profile.lastName eq "Doe"'` |
+| Display name contains | `list_users` | `search='profile.displayName co "Jane"'` |
+| Find by department | `list_users` | `search='profile.department eq "Engineering"'` |
+| Find by status | `list_users` | `search='status eq "ACTIVE"'` — valid values: ACTIVE, DEPROVISIONED, LOCKED_OUT, PASSWORD_EXPIRED, PROVISIONED, RECOVERY, STAGED, SUSPENDED |
+| Prefix browse (simple names, no dots) | `list_users` | `q="jane"` — only for simple strings; breaks on dots, @, hyphens |
+| Get one user by ID | `get_user` | `user_id="00u..."` |
+| Get one user by login | `get_user` | `user_id="jane.doe@example.com"` — login works as the ID |
+| List members of a group | `list_group_users` | `group_id="00g..."` — **use this, not `list_users`, when listing members of a specific group** |
+| List all users (paginated) | `list_users` | no filter — returns first page only |
+
+⚠ **Search parameter rules:**
+- Use `search` (SCIM 2.0) whenever the value contains a dot, @, hyphen, or space — it is indexed and reliable.
+- Use `q` only for casual prefix browsing with plain single-word values.
+- Never use `q` for email addresses or logins — the dot breaks matching and returns empty results.
+
+## Lifecycle
+
+| Goal | Tool | Key Parameters |
+|------|------|----------------|
+| Create user (staged) | `create_user` | `profile={...}, activate=False` |
+| Create and activate | `create_user` | `profile={...}, activate=True` |
+| Activate a staged user | `activate_user` | `user_id, send_email=True` |
+| Deactivate | `deactivate_user` | `user_id` |
+| Suspend | `suspend_user` | `user_id` |
+| Unsuspend | `unsuspend_user` | `user_id` |
+| Unlock | `unlock_user` | `user_id` |
+| Reactivate deprovisioned | `reactivate_user` | `user_id` |
+| Delete (must be deactivated first) | `delete_deactivated_user` | `user_id` |
+| Update profile fields | `update_user_profile` | `user_id, profile={field: value}` |
+| Replace full user object | `replace_user` | `user_id, user={...}` |
+
 ## Credentials
 
 | Goal | Tool | Key Parameters |

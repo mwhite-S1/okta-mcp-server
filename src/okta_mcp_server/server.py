@@ -7,6 +7,7 @@
 
 import os
 import sys
+import typing
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -16,6 +17,23 @@ from mcp.server.fastmcp import FastMCP
 
 from okta_mcp_server.utils.auth.auth_manager import OktaAuthManager
 from okta_mcp_server.utils.auth.middleware import _user_token_var
+
+
+def _patch_okta_models() -> None:
+    """Remove incorrect Pydantic constraints from generated Okta SDK models.
+
+    LogOutcome.reason has max_length=255 in the generated code but the
+    Okta API returns longer strings for some authentication events.
+    """
+    try:
+        import okta.models.log_outcome as _mod
+        _mod.LogOutcome.__annotations__["reason"] = typing.Optional[str]
+        _mod.LogOutcome.model_rebuild(force=True)
+    except Exception:
+        pass
+
+
+_patch_okta_models()
 
 LOG_FILE = os.environ.get("OKTA_LOG_FILE")
 

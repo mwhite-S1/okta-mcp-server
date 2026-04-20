@@ -155,3 +155,8 @@ def resource_detail_policies_simulation() -> str:
 @mcp.resource("skill://detail/authenticators/aaguids")
 def resource_detail_authenticators_aaguids() -> str:
     return _read("detail/authenticators-aaguids.md")
+
+
+@mcp.resource("skill://detail/system-logs/scenarios")
+def resource_detail_system_logs_scenarios() -> str:
+    return _read("detail/logs-scenarios.md")

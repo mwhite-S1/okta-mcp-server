@@ -18,7 +18,7 @@ GROUPS
 
 | Goal | Tool | Parameters |
 |------|------|------------|
-| List members | `list_group_users` | `group_id, fetch_all=True` — use fetch_all for large groups |
+| List members | `list_group_users` | `group_id` — paginated by default; add `fetch_all=True` only if user explicitly asks for all members |
 | Add a member | `add_user_to_group` | `group_id, user_id` |
 | Remove a member | `remove_user_from_group` | `group_id, user_id` |
 

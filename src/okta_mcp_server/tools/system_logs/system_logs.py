@@ -93,17 +93,46 @@ async def get_logs(
             logger.debug(f"Log types found: {set(log.eventType for log in logs[:10] if hasattr(log, 'eventType'))}")
 
         from okta_mcp_server.utils.pagination import _has_next
-        if fetch_all and _has_next(response):
-            logger.info(f"fetch_all=True, auto-paginating from initial {log_count} log entries")
-            all_logs, pagination_info = await paginate_all_results(
-                response, logs,
-                client_method=client.list_log_events,
-                base_kwargs=query_params,
-            )
+        from datetime import datetime, timezone, timedelta
 
-            logger.info(
-                f"Successfully retrieved {len(all_logs)} log entries across {pagination_info['pages_fetched']} pages"
-            )
+        if fetch_all:
+            # The Okta SDK v2 does not reliably expose the Link header cursor for
+            # system logs, so _has_next() returns False even when more pages exist.
+            # Fall back to timestamp windowing: use the last event's published time
+            # as the next `since` and keep fetching until a partial page is returned.
+            all_logs = list(logs)
+            pages_fetched = 1
+            current_logs = logs
+            page_limit = limit if limit else 100
+
+            while len(current_logs) >= page_limit:
+                last = current_logs[-1]
+                last_published = getattr(last, "published", None)
+                if not last_published:
+                    break
+                try:
+                    last_dt = datetime.fromisoformat(str(last_published).replace("Z", "+00:00"))
+                    next_since = (last_dt + timedelta(milliseconds=1)).strftime("%Y-%m-%dT%H:%M:%S.") + \
+                                 f"{(last_dt + timedelta(milliseconds=1)).microsecond // 1000:03d}Z"
+                except Exception as e:
+                    logger.warning(f"Timestamp windowing failed: {e}")
+                    break
+
+                next_params = dict(query_params)
+                next_params["since"] = next_since
+                next_params.pop("after", None)
+
+                logger.info(f"Timestamp-windowed page {pages_fetched + 1}: since={next_since}, total so far={len(all_logs)}")
+                current_logs, response, err = await client.list_log_events(**next_params)
+
+                if err or not current_logs:
+                    break
+
+                all_logs.extend(current_logs)
+                pages_fetched += 1
+
+            pagination_info = {"pages_fetched": pages_fetched, "total_items": len(all_logs), "stopped_early": False, "stop_reason": None}
+            logger.info(f"Successfully retrieved {len(all_logs)} log entries across {pages_fetched} pages")
             return create_paginated_response(all_logs, response, fetch_all_used=True, pagination_info=pagination_info)
         else:
             logger.info(f"Successfully retrieved {log_count} system log entries")
