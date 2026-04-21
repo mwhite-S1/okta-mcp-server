@@ -17,6 +17,13 @@ COPY run_sse.py ./
 
 RUN uv sync --no-dev
 
+# Append Zscaler TLS inspection root CA to the venv's certifi bundle so that
+# requests trusts it alongside all standard CAs — not instead of them.
+COPY zscaler-root.crt /tmp/zscaler-root.crt
+RUN /app/.venv/bin/python -c \
+    "import certifi; open(certifi.where(), 'ab').write(open('/tmp/zscaler-root.crt', 'rb').read())" \
+    && rm /tmp/zscaler-root.crt
+
 RUN useradd --create-home --shell /bin/bash appuser \
     && chown -R appuser:appuser /app /home/appuser
 USER appuser
